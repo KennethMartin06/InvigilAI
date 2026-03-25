@@ -1,0 +1,126 @@
+"""
+main.py — End-to-end pipeline for the Multi-Modal AI Cheating Detection System.
+
+Usage:
+    python -m cheating_detection.main
+    # or from the cheating_detection/ directory:
+    python main.py
+
+Pipeline steps:
+  1. Generate synthetic dataset (240 sessions, 5 categories)
+  2. Preprocess: clean → split → normalise → save scaler
+  3. Train SVM, Random Forest, and MLP
+  4. Evaluate all three models on the held-out test set
+  5. Run ablation study (visual-only / behavioral-only / multi-modal)
+  6. Threshold analysis and ROC / PR curve generation
+  7. Print formatted summary table to console
+  8. Persist all outputs to outputs/ and models/
+"""
+
+import os
+import sys
+import time
+
+# Make sure the package root is on the path when run directly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from cheating_detection.data.generate_dataset import generate_dataset
+from cheating_detection.preprocessing.preprocess import preprocess
+from cheating_detection.models.train import train_svm, train_random_forest, train_mlp, plot_training_curves
+from cheating_detection.models.evaluate import run_full_evaluation
+from cheating_detection.config import OUTPUTS_DIR, MODELS_DIR
+
+
+def banner(text: str) -> None:
+    """Print a section banner."""
+    width = 64
+    print("\n" + "=" * width)
+    print(f"  {text}")
+    print("=" * width)
+
+
+def main() -> None:
+    """Run the full cheating-detection pipeline end-to-end."""
+
+    os.makedirs(OUTPUTS_DIR, exist_ok=True)
+    os.makedirs(MODELS_DIR, exist_ok=True)
+
+    t0_total = time.time()
+
+    # ── Step 1: Generate synthetic dataset ──────────────────────────────────
+    banner("STEP 1 — Synthetic Dataset Generation")
+    t0 = time.time()
+    X, y = generate_dataset(save_npz=True, save_csv=True, verbose=True)
+    print(f"  Done in {time.time() - t0:.1f}s")
+
+    # ── Step 2: Preprocess ───────────────────────────────────────────────────
+    banner("STEP 2 — Preprocessing (clean → split → normalise)")
+    t0 = time.time()
+    splits = preprocess(X, y, verbose=True)
+    X_train = splits["X_train"]
+    X_val   = splits["X_val"]
+    X_test  = splits["X_test"]
+    y_train = splits["y_train"]
+    y_val   = splits["y_val"]
+    y_test  = splits["y_test"]
+    print(f"  Done in {time.time() - t0:.1f}s")
+
+    # ── Step 3a: Train SVM ───────────────────────────────────────────────────
+    banner("STEP 3a — Train SVM (RBF + GridSearch)")
+    t0 = time.time()
+    svm_model = train_svm(X_train, y_train, verbose=True)
+    print(f"  Done in {time.time() - t0:.1f}s")
+
+    # ── Step 3b: Train Random Forest ─────────────────────────────────────────
+    banner("STEP 3b — Train Random Forest")
+    t0 = time.time()
+    rf_model = train_random_forest(X_train, y_train, verbose=True)
+    print(f"  Done in {time.time() - t0:.1f}s")
+
+    # ── Step 3c: Train MLP ───────────────────────────────────────────────────
+    banner("STEP 3c — Train MLP (PyTorch, early stopping)")
+    t0 = time.time()
+    mlp_model, history = train_mlp(
+        X_train, y_train,
+        X_val,   y_val,
+        verbose=True,
+    )
+    plot_training_curves(history)
+    print(f"  Done in {time.time() - t0:.1f}s")
+
+    # ── Steps 4–6: Full evaluation ───────────────────────────────────────────
+    banner("STEPS 4-6 — Evaluation, Ablation, Curves")
+    models = {
+        "SVM":           svm_model,
+        "Random Forest": rf_model,
+        "MLP":           mlp_model,
+    }
+    run_full_evaluation(models, splits, best_model_name="MLP", verbose=True)
+
+    # ── Summary ──────────────────────────────────────────────────────────────
+    banner("PIPELINE COMPLETE")
+    elapsed = time.time() - t0_total
+    print(f"  Total elapsed time : {elapsed:.1f}s")
+    print(f"  Saved artifacts:")
+    artifacts = [
+        "data/synthetic_dataset.npz",
+        "data/synthetic_dataset.csv",
+        "models/scaler.joblib",
+        "models/svm_model.joblib",
+        "models/rf_model.joblib",
+        "models/mlp_model.pth",
+        "outputs/confusion_matrix.png",
+        "outputs/training_curves.png",
+        "outputs/ablation_results.png",
+        "outputs/threshold_analysis.png",
+        "outputs/roc_curve.png",
+        "outputs/precision_recall_curve.png",
+        "outputs/results.json",
+    ]
+    for a in artifacts:
+        print(f"    ✓ cheating_detection/{a}")
+    print()
+
+
+if __name__ == "__main__":
+    main()
