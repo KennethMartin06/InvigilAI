@@ -6,6 +6,11 @@ import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 
+# Absolute path to this file's directory (proctoring_app/backend/)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# Absolute path to .env sitting next to this file
+_ENV_FILE = os.path.join(_HERE, ".env")
+
 
 class Settings(BaseSettings):
     """Central configuration loaded from environment variables / .env file."""
@@ -18,9 +23,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiry_hours: int = 24
 
-    # ── ML Models ─────────────────────────────────────────────────────────────
-    model_path: str = "../cheating_detection/models/mlp_model.pth"
-    scaler_path: str = "../cheating_detection/models/scaler.joblib"
+    # ── ML Models (relative to backend/ directory) ───────────────────────────
+    model_path: str = "../../cheating_detection/models/mlp_model.pth"
+    scaler_path: str = "../../cheating_detection/models/scaler.joblib"
     cheating_threshold: float = 0.70
 
     # ── File storage ──────────────────────────────────────────────────────────
@@ -34,9 +39,12 @@ class Settings(BaseSettings):
         """Parse comma-separated CORS origins into a list."""
         return [o.strip() for o in self.cors_origins.split(",")]
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = {
+        "env_file": _ENV_FILE,       # always load from backend/.env
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False,
+        "extra": "ignore",
+    }
 
 
 @lru_cache()

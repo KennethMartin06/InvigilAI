@@ -38,9 +38,11 @@ async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle handler."""
     logger.info("=== InvigilAI Proctoring Backend starting up ===")
 
-    # Load ML models
-    model_path = os.path.abspath(settings.model_path)
-    scaler_path = os.path.abspath(settings.scaler_path)
+    # Load ML models — resolve paths relative to this file's location so
+    # the server works regardless of which directory uvicorn is launched from.
+    _backend_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path  = os.path.normpath(os.path.join(_backend_dir, settings.model_path))
+    scaler_path = os.path.normpath(os.path.join(_backend_dir, settings.scaler_path))
     logger.info("Loading MLP model from %s", model_path)
     logger.info("Loading scaler from %s", scaler_path)
     try:
