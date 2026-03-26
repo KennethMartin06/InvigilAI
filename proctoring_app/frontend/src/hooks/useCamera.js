@@ -28,7 +28,12 @@ export default function useCamera() {
       streamRef.current = stream
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        await videoRef.current.play()
+        try {
+          await videoRef.current.play()
+        } catch (playErr) {
+          // Ignore AbortError — happens when component re-renders mid-play
+          if (playErr.name !== 'AbortError') throw playErr
+        }
       }
       setIsActive(true)
     } catch (err) {
