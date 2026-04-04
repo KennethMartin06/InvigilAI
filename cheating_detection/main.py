@@ -25,10 +25,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cheating_detection.data.generate_dataset import generate_dataset
+from cheating_detection.data.real_data_pipeline import run as build_combined_dataset
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import train_svm, train_random_forest, train_mlp, plot_training_curves
+from cheating_detection.models.audio_classifier import train_audio_classifier
 from cheating_detection.models.evaluate import run_full_evaluation
-from cheating_detection.config import OUTPUTS_DIR, MODELS_DIR
+from cheating_detection.config import OUTPUTS_DIR, MODELS_DIR, DATA_DIR
 
 
 def banner(text: str) -> None:
@@ -52,6 +54,17 @@ def main() -> None:
     t0 = time.time()
     X, y = generate_dataset(save_npz=True, save_csv=True, verbose=True)
     print(f"  Done in {time.time() - t0:.1f}s")
+
+    # ── Step 1b: Combine with real CMU Keystroke data ────────────────────────
+    banner("STEP 1b — Augment with Real CMU Keystroke Data")
+    t0 = time.time()
+    try:
+        X, y = build_combined_dataset()
+        print(f"  Combined dataset size: {len(X)} samples")
+        print(f"  Done in {time.time() - t0:.1f}s")
+    except Exception as e:
+        print(f"  Warning: Could not load real keystroke data ({e})")
+        print("  Continuing with synthetic data only.")
 
     # ── Step 2: Preprocess ───────────────────────────────────────────────────
     banner("STEP 2 — Preprocessing (clean → split → normalise)")
@@ -88,6 +101,16 @@ def main() -> None:
     plot_training_curves(history)
     print(f"  Done in {time.time() - t0:.1f}s")
 
+    # ── Step 3d: Train Audio Classifier ─────────────────────────────────────
+    banner("STEP 3d — Train Audio Classifier (ESC-50)")
+    t0 = time.time()
+    try:
+        train_audio_classifier()
+        print(f"  Done in {time.time() - t0:.1f}s")
+    except Exception as e:
+        print(f"  Warning: Audio classifier training failed ({e})")
+        print("  Continuing without audio model.")
+
     # ── Steps 4–6: Full evaluation ───────────────────────────────────────────
     banner("STEPS 4-6 — Evaluation, Ablation, Curves")
     models = {
@@ -116,6 +139,9 @@ def main() -> None:
         "outputs/roc_curve.png",
         "outputs/precision_recall_curve.png",
         "outputs/results.json",
+        "models/audio_classifier.joblib",
+        "models/audio_scaler.joblib",
+        "data/combined_dataset.npz",
     ]
     for a in artifacts:
         print(f"    ✓ cheating_detection/{a}")
