@@ -4,3 +4,8 @@ __pycache__/
 .DS_Store
 proctoring.db
 uploads/screenshots/
+datasets/audio/ESC-50/audio/
+datasets/face/*.zip
+datasets/audio/*.tar.gz
+datasets/video/*.rar
+datasets/pose/*.zip
