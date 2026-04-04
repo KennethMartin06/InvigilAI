@@ -9,3 +9,7 @@ datasets/face/*.zip
 datasets/audio/*.tar.gz
 datasets/video/*.rar
 datasets/pose/*.zip
+datasets/audio/
+datasets/mouse/Mouse-Dynamics-Challenge/training_files/
+datasets/mouse/Mouse-Dynamics-Challenge/test_files/
+datasets/face/
