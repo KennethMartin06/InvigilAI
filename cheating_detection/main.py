@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cheating_detection.data.generate_dataset import generate_dataset
 from cheating_detection.data.real_data_pipeline import run as build_combined_dataset
+from cheating_detection.data.mpiigaze_pipeline import run as build_mpiigaze_dataset
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import train_svm, train_random_forest, train_mlp, plot_training_curves
 from cheating_detection.models.audio_classifier import train_audio_classifier
@@ -65,6 +66,20 @@ def main() -> None:
     except Exception as e:
         print(f"  Warning: Could not load real keystroke data ({e})")
         print("  Continuing with synthetic data only.")
+
+    # ── Step 1c: Integrate MPIIGaze real gaze data ──────────────────────────
+    banner("STEP 1c — Augment with Real MPIIGaze Gaze Data")
+    t0 = time.time()
+    try:
+        X, y = build_mpiigaze_dataset()
+        if X is not None:
+            print(f"  MPIIGaze merged dataset size: {len(X)} samples")
+            print(f"  Done in {time.time() - t0:.1f}s")
+        else:
+            print("  Skipping MPIIGaze (dataset not found).")
+    except Exception as e:
+        print(f"  Warning: Could not process MPIIGaze ({e})")
+        print("  Continuing without MPIIGaze data.")
 
     # ── Step 2: Preprocess ───────────────────────────────────────────────────
     banner("STEP 2 — Preprocessing (clean → split → normalise)")
