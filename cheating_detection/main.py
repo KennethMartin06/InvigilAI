@@ -30,6 +30,7 @@ from cheating_detection.data.mpiigaze_pipeline import run as build_mpiigaze_data
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import train_svm, train_random_forest, train_mlp, plot_training_curves
 from cheating_detection.models.audio_classifier import train_audio_classifier
+from cheating_detection.data.librispeech_pipeline import run as train_librispeech_audio
 from cheating_detection.models.evaluate import run_full_evaluation
 from cheating_detection.config import OUTPUTS_DIR, MODELS_DIR, DATA_DIR
 
@@ -116,15 +117,18 @@ def main() -> None:
     plot_training_curves(history)
     print(f"  Done in {time.time() - t0:.1f}s")
 
-    # ── Step 3d: Train Audio Classifier ─────────────────────────────────────
-    banner("STEP 3d — Train Audio Classifier (ESC-50)")
+    # ── Step 3d: Train Audio Classifier (ESC-50 + LibriSpeech) ──────────────
+    banner("STEP 3d — Train Audio Classifier (ESC-50 + LibriSpeech)")
     t0 = time.time()
     try:
-        train_audio_classifier()
+        train_librispeech_audio()
         print(f"  Done in {time.time() - t0:.1f}s")
     except Exception as e:
-        print(f"  Warning: Audio classifier training failed ({e})")
-        print("  Continuing without audio model.")
+        print(f"  Warning: LibriSpeech training failed ({e}), falling back to ESC-50 only")
+        try:
+            train_audio_classifier()
+        except Exception as e2:
+            print(f"  Warning: Audio classifier training failed ({e2})")
 
     # ── Steps 4–6: Full evaluation ───────────────────────────────────────────
     banner("STEPS 4-6 — Evaluation, Ablation, Curves")
