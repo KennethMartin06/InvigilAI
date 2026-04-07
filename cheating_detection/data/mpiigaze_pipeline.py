@@ -79,13 +79,9 @@ def extract_gaze_from_mat(mat_path: Path) -> np.ndarray | None:
         # Try right eye first, then left
         for eye in ["right", "left"]:
             try:
-                eye_data = data[eye].item()
-                gaze_vec = eye_data["gaze"]
-
-                # gaze_vec may be nested in another item()
-                if not isinstance(gaze_vec, np.ndarray):
-                    gaze_vec = gaze_vec.item()
-
+                eye_data = data[eye].item()        # 0-d → struct
+                gaze_raw = eye_data["gaze"]        # 0-d array
+                gaze_vec = gaze_raw.item()         # 0-d → actual (N,3) array
                 gaze_vec = np.array(gaze_vec)
 
                 if gaze_vec.ndim == 2 and gaze_vec.shape[1] == 3:
