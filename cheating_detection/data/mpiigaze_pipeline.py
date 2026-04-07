@@ -144,12 +144,19 @@ def gaze_to_features(gaze_angles: np.ndarray) -> np.ndarray:
 
 def assign_labels(gaze_angles: np.ndarray) -> np.ndarray:
     """
-    Label each sample:
-      0 = Normal           (|yaw| < 25°)
-      1 = Gaze/Distraction (|yaw| >= 25°)
+    Label each sample using percentile-based threshold.
+    Top 20% of gaze deviation = looking away (label 1).
+    Bottom 80% = normal (label 0).
+
+    This handles controlled lab datasets where absolute angles are small.
     """
-    yaw_deg = np.degrees(gaze_angles[:, 1])
-    return np.where(np.abs(yaw_deg) >= 25, 1, 0).astype(np.int64)
+    yaw_deg = np.abs(np.degrees(gaze_angles[:, 1]))
+    pitch_deg = np.abs(np.degrees(gaze_angles[:, 0]))
+    deviation = np.sqrt(yaw_deg**2 + pitch_deg**2)
+
+    threshold = np.percentile(deviation, 80)
+    print(f"  Gaze deviation threshold (80th pct): {threshold:.2f}°")
+    return np.where(deviation >= threshold, 1, 0).astype(np.int64)
 
 
 def process_all_participants() -> tuple[np.ndarray, np.ndarray]:
