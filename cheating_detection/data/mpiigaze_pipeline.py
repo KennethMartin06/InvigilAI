@@ -155,7 +155,6 @@ def assign_labels(gaze_angles: np.ndarray) -> np.ndarray:
     deviation = np.sqrt(yaw_deg**2 + pitch_deg**2)
 
     threshold = np.percentile(deviation, 80)
-    print(f"  Gaze deviation threshold (80th pct): {threshold:.2f}°")
     return np.where(deviation >= threshold, 1, 0).astype(np.int64)
 
 
