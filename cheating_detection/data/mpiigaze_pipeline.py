@@ -47,38 +47,54 @@ def inspect_mat(mat_path: Path) -> dict:
     return {k: v for k, v in mat.items() if not k.startswith("__")}
 
 
+def gaze_vector_to_angles(gaze_vec: np.ndarray) -> np.ndarray:
+    """
+    Convert 3D unit gaze vectors (N, 3) to [pitch, yaw] angles in radians.
+    Convention: x=right, y=up, z=forward(-z = away from screen)
+    """
+    x = gaze_vec[:, 0]
+    y = gaze_vec[:, 1]
+    z = gaze_vec[:, 2]
+    yaw   = np.arctan2(x, -z)          # horizontal angle
+    pitch = np.arctan2(y, np.sqrt(x**2 + z**2))  # vertical angle
+    return np.column_stack([pitch, yaw]).astype(np.float32)
+
+
 def extract_gaze_from_mat(mat_path: Path) -> np.ndarray | None:
     """
-    Extract gaze angles from a normalized .mat file.
-    Returns array of shape (N, 2) with [pitch, yaw] in radians,
-    or None if format not recognised.
+    Extract gaze angles from MPIIGaze normalized .mat file.
+
+    Structure: data -> right/left -> gaze (N,3), image (N,36,60), pose (N,3)
+    Returns array of shape (N, 2) with [pitch, yaw] in radians.
     """
     try:
         mat = sio.loadmat(str(mat_path), squeeze_me=True)
 
-        # Try common key names used in MPIIGaze
-        for key in ["label", "gaze", "gazeLabel", "data"]:
-            if key not in mat:
+        if "data" not in mat:
+            return None
+
+        data = mat["data"]
+
+        # data is a 0-d struct with fields 'right' and 'left'
+        # Try right eye first, then left
+        for eye in ["right", "left"]:
+            try:
+                eye_data = data[eye].item()
+                gaze_vec = eye_data["gaze"]
+
+                # gaze_vec may be nested in another item()
+                if not isinstance(gaze_vec, np.ndarray):
+                    gaze_vec = gaze_vec.item()
+
+                gaze_vec = np.array(gaze_vec)
+
+                if gaze_vec.ndim == 2 and gaze_vec.shape[1] == 3:
+                    return gaze_vector_to_angles(gaze_vec)
+            except Exception:
                 continue
 
-            val = mat[key]
-
-            # If it's a struct (object array), dig into it
-            if hasattr(val, "dtype") and val.dtype.names:
-                for subkey in ["label", "gaze", "left", "right"]:
-                    if subkey in val.dtype.names:
-                        sub = val[subkey]
-                        if hasattr(sub, "shape") and len(sub.shape) >= 1:
-                            arr = np.array(sub.tolist())
-                            if arr.ndim == 2 and arr.shape[1] >= 2:
-                                return arr[:, :2].astype(np.float32)
-            else:
-                arr = np.array(val)
-                if arr.ndim == 2 and arr.shape[1] >= 2:
-                    return arr[:, :2].astype(np.float32)
-
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 
