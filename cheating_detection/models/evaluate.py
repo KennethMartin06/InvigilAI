@@ -75,7 +75,7 @@ def _get_proba(model, X: np.ndarray) -> np.ndarray:
     np.ndarray, shape (n_samples, n_classes)
     """
     if isinstance(model, MLP):
-        x_t = torch.tensor(X, dtype=torch.float32)
+        x_t = torch.tensor(X, dtype=torch.float32).to(next(model.parameters()).device)
         return model.predict_proba(x_t)
     return model.predict_proba(X)
 
