@@ -25,6 +25,7 @@ from cheating_detection.data.daisee_pipeline import run as build_daisee_dataset
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import train_random_forest, train_mlp, plot_training_curves
 from cheating_detection.models.audio_classifier import train_audio_classifier
+from cheating_detection.models.evaluate import run_full_evaluation
 from cheating_detection.config import OUTPUTS_DIR, MODELS_DIR
 
 # Try importing LibriSpeech pipeline (optional)
