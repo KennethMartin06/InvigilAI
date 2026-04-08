@@ -27,6 +27,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ── Phone detector optional import ───────────────────────────────────────────
+try:
+    from cheating_detection.models.phone_detector import detect_phone
+    _PHONE_DETECTION_AVAILABLE = True
+except ImportError:
+    _PHONE_DETECTION_AVAILABLE = False
+    logger.warning("Phone detector not available")
+
 # ── MediaPipe optional import ─────────────────────────────────────────────────
 try:
     import mediapipe as mp
@@ -103,7 +111,9 @@ class FrameProcessor:
 
         Returns
         -------
-        dict with keys matching the 8 visual feature names.
+        dict with keys matching the 8 visual feature names, plus:
+          phone_detected  : bool
+          phone_confidence: float
         If no face is detected, returns a high-suspicion default vector.
         """
         image = self._decode_frame(base64_frame)
@@ -111,8 +121,19 @@ class FrameProcessor:
             return self._no_face_defaults()
 
         if _MEDIAPIPE_AVAILABLE and self._face_mesh is not None:
-            return self._process_mediapipe(image)
-        return self._process_haar(image)
+            result = self._process_mediapipe(image)
+        else:
+            result = self._process_haar(image)
+
+        # ── Phone detection (runs in addition to face pipeline) ───────────────
+        if _PHONE_DETECTION_AVAILABLE:
+            phone_detected, phone_conf = detect_phone(image)
+        else:
+            phone_detected, phone_conf = False, 0.0
+
+        result["phone_detected"]   = phone_detected
+        result["phone_confidence"] = phone_conf
+        return result
 
     # ── MediaPipe pipeline ────────────────────────────────────────────────────
 

@@ -92,6 +92,10 @@ def fuse_and_predict(visual: dict, behavioral: dict) -> dict:
     """
     Fuse features and run the loaded ML model.
 
+    If a phone is detected in the visual dict (phone_detected=True), the
+    result is immediately overridden to External Device class regardless of
+    the MLP output.
+
     Parameters
     ----------
     visual : dict
@@ -100,10 +104,35 @@ def fuse_and_predict(visual: dict, behavioral: dict) -> dict:
     Returns
     -------
     dict — prediction result from inference.predict(), augmented with
-           the raw feature vector for logging.
+           the raw feature vector and phone detection fields.
     """
     feature_vec = fuse_features(visual, behavioral)
 
+    # ── Phone detection override ──────────────────────────────────────────────
+    phone_detected  = bool(visual.get("phone_detected", False))
+    phone_confidence = float(visual.get("phone_confidence", 0.0))
+
+    if phone_detected:
+        conf = max(phone_confidence, 0.92)
+        result = {
+            "predicted_class": 2,
+            "class_name": "External Device",
+            "cheating_probability": round(conf, 4),
+            "class_probabilities": {
+                "Normal": round(1.0 - conf, 4),
+                "Gaze/Distraction": 0.0,
+                "External Device": round(conf, 4),
+                "Multi-Person": 0.0,
+                "Abnormal Keystroke": 0.0,
+            },
+            "is_cheating": True,
+        }
+        result["feature_vector"]    = feature_vec.squeeze().tolist()
+        result["phone_detected"]    = True
+        result["phone_confidence"]  = phone_confidence
+        return result
+
+    # ── Normal MLP inference ──────────────────────────────────────────────────
     try:
         model = get_model()
         scaler = get_scaler()
@@ -124,5 +153,7 @@ def fuse_and_predict(visual: dict, behavioral: dict) -> dict:
             "is_cheating": False,
         }
 
-    result["feature_vector"] = feature_vec.squeeze().tolist()
+    result["feature_vector"]   = feature_vec.squeeze().tolist()
+    result["phone_detected"]   = False
+    result["phone_confidence"] = 0.0
     return result

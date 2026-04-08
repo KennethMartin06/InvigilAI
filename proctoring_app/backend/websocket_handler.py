@@ -114,6 +114,8 @@ async def proctor_websocket(websocket: WebSocket, session_id: int) -> None:
                         "class_name": result["class_name"],
                         "is_cheating": result["is_cheating"],
                         "class_probabilities": result["class_probabilities"],
+                        "phone_detected": result.get("phone_detected", False),
+                        "phone_confidence": result.get("phone_confidence", 0.0),
                         "timestamp": ts,
                     })
 
