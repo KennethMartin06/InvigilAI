@@ -22,6 +22,7 @@ from cheating_detection.data.generate_dataset import generate_dataset
 from cheating_detection.data.real_data_pipeline import run as build_combined_dataset
 from cheating_detection.data.mpiigaze_pipeline import run as build_mpiigaze_dataset
 from cheating_detection.data.daisee_pipeline import run as build_daisee_dataset
+from cheating_detection.data.hmdb51_pipeline import run_hmdb51_pipeline, merge_with_combined as merge_hmdb51
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import train_random_forest, train_mlp, plot_training_curves
 from cheating_detection.models.audio_classifier import train_audio_classifier
@@ -91,6 +92,26 @@ def main() -> None:
     except Exception as e:
         print(f"  Skipping DAiSEE ({e})")
 
+    # ── Step 1e: HMDB-51 video data ────────────────────────────────────────
+    banner("STEP 1e — Augment with HMDB-51 Action Videos")
+    t0 = time.time()
+    try:
+        X_hmdb, y_hmdb = run_hmdb51_pipeline()
+        if len(X_hmdb) > 0:
+            merge_hmdb51(X_hmdb, y_hmdb)
+            from cheating_detection.data.combined_dataset import load_combined  # noqa
+            import numpy as np
+            data = np.load(
+                os.path.join(os.path.dirname(__file__), "data", "combined_dataset.npz")
+            )
+            X, y = data["X"], data["y"]
+            print(f"  HMDB-51 added {len(X_hmdb)} samples → total {len(X)}")
+            print(f"  Done in {time.time() - t0:.1f}s")
+        else:
+            print("  Skipping (no samples extracted).")
+    except Exception as e:
+        print(f"  Skipping HMDB-51 ({e})")
+
     # ── Step 2: Preprocess ─────────────────────────────────────────────────
     banner("STEP 2 — Preprocessing (clean → split → normalise)")
     t0 = time.time()
@@ -155,6 +176,7 @@ def main() -> None:
     print(f"    ✓ DAiSEE (9,068 engagement-labeled clips)")
     print(f"    ✓ ESC-50 (480 audio clips)")
     print(f"    ✓ LibriSpeech (200 speech clips)")
+    print(f"    ✓ HMDB-51 action videos (talk/wave/laugh/smoke vs sit/smile/drink)")
     print(f"  Total training samples: {len(X)}")
     print()
 
