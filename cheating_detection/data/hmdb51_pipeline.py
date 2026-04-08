@@ -170,42 +170,34 @@ def run_hmdb51_pipeline() -> tuple[np.ndarray, np.ndarray]:
             logger.warning("Class directory missing: %s", class_dir)
             continue
 
-        video_files = list(class_dir.glob("*.avi")) + list(class_dir.glob("*.mp4"))
-        logger.info("  %-12s  label=%d  videos=%d", class_name, label, len(video_files))
+        # Each clip is a sub-directory of JPEG frames
+        clip_dirs = [d for d in class_dir.iterdir() if d.is_dir()]
+        logger.info("  %-12s  label=%d  clips=%d", class_name, label, len(clip_dirs))
         count = 0
 
-        for vf in video_files:
-            try:
-                cap = cv2.VideoCapture(str(vf))
-                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                if total < 2:
-                    cap.release()
+        for clip_dir in clip_dirs:
+            frames = sorted(clip_dir.glob("*.jpg")) + sorted(clip_dir.glob("*.png"))
+            if not frames:
+                continue
+
+            indices = np.linspace(0, len(frames) - 1, min(5, len(frames)), dtype=int)
+            for fi in indices:
+                frame = cv2.imread(str(frames[fi]))
+                if frame is None:
                     continue
 
-                indices = np.linspace(0, total - 1, FRAMES_PER_VIDEO, dtype=int)
-                for fi in indices:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(fi))
-                    ok, frame = cap.read()
-                    if not ok or frame is None:
+                vis = _extract_frame_features(frame)
+                if vis is None:
+                    if label == 1:
+                        vis = np.array([35.0, 15.0, 30.0, 10.0, 5.0, 0.0, 1.0, 1.0],
+                                       dtype=np.float32)
+                    else:
                         continue
 
-                    vis = _extract_frame_features(frame)
-                    if vis is None:
-                        # No face — use high-suspicion defaults if suspicious class
-                        if label == 1:
-                            vis = np.array([35.0, 15.0, 30.0, 10.0, 5.0, 0.0, 1.0, 1.0],
-                                           dtype=np.float32)
-                        else:
-                            continue  # skip faceless normal frames
-
-                    beh = _behavioral_for_label(label, rng)
-                    all_X.append(np.concatenate([vis, beh]))
-                    all_y.append(label)
-                    count += 1
-
-                cap.release()
-            except Exception as exc:
-                logger.warning("Error processing %s: %s", vf.name, exc)
+                beh = _behavioral_for_label(label, rng)
+                all_X.append(np.concatenate([vis, beh]))
+                all_y.append(label)
+                count += 1
 
         class_counts[class_name] = count
 
