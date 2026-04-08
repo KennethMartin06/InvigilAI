@@ -15,6 +15,9 @@ Pipeline steps:
 import os
 import sys
 import time
+from pathlib import Path
+
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,11 +26,16 @@ from cheating_detection.data.real_data_pipeline import run as build_combined_dat
 from cheating_detection.data.mpiigaze_pipeline import run as build_mpiigaze_dataset
 from cheating_detection.data.daisee_pipeline import run as build_daisee_dataset
 from cheating_detection.data.hmdb51_pipeline import run_hmdb51_pipeline, merge_with_combined as merge_hmdb51
+from cheating_detection.data.custom_video_pipeline import process_video, merge_and_save as merge_custom_video
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import train_random_forest, train_mlp, plot_training_curves
 from cheating_detection.models.audio_classifier import train_audio_classifier
 from cheating_detection.models.evaluate import run_full_evaluation
 from cheating_detection.config import OUTPUTS_DIR, MODELS_DIR
+
+_DATA_DIR = Path(__file__).parent / "data"
+_COMBINED_PATH = _DATA_DIR / "combined_dataset.npz"
+_CUSTOM_VIDEO  = Path.home() / "invigilai" / "datasets" / "custom_cheat.mp4"
 
 # Try importing LibriSpeech pipeline (optional)
 try:
@@ -35,6 +43,12 @@ try:
     HAS_LIBRISPEECH = True
 except ImportError:
     HAS_LIBRISPEECH = False
+
+
+def _reload_combined():
+    """Load X, y from the latest combined_dataset.npz."""
+    data = np.load(_COMBINED_PATH)
+    return data["X"], data["y"]
 
 
 def banner(text: str) -> None:
@@ -99,18 +113,31 @@ def main() -> None:
         X_hmdb, y_hmdb = run_hmdb51_pipeline()
         if len(X_hmdb) > 0:
             merge_hmdb51(X_hmdb, y_hmdb)
-            from cheating_detection.data.combined_dataset import load_combined  # noqa
-            import numpy as np
-            data = np.load(
-                os.path.join(os.path.dirname(__file__), "data", "combined_dataset.npz")
-            )
-            X, y = data["X"], data["y"]
+            X, y = _reload_combined()
             print(f"  HMDB-51 added {len(X_hmdb)} samples → total {len(X)}")
-            print(f"  Done in {time.time() - t0:.1f}s")
         else:
-            print("  Skipping (no samples extracted).")
+            print("  Skipping (no HMDB-51 samples extracted — check dataset path).")
+        print(f"  Done in {time.time() - t0:.1f}s")
     except Exception as e:
         print(f"  Skipping HMDB-51 ({e})")
+
+    # ── Step 1f: Custom cheat video ────────────────────────────────────────
+    banner("STEP 1f — Augment with Custom Cheat Video")
+    t0 = time.time()
+    try:
+        if _CUSTOM_VIDEO.exists():
+            X_vid, y_vid = process_video(str(_CUSTOM_VIDEO))
+            if len(X_vid) > 0:
+                merge_custom_video(X_vid, y_vid)
+                X, y = _reload_combined()
+                print(f"  Custom video added {len(X_vid)} samples → total {len(X)}")
+            else:
+                print("  No faces detected in custom video — skipping.")
+        else:
+            print(f"  Custom video not found at {_CUSTOM_VIDEO} — skipping.")
+        print(f"  Done in {time.time() - t0:.1f}s")
+    except Exception as e:
+        print(f"  Skipping custom video ({e})")
 
     # ── Step 2: Preprocess ─────────────────────────────────────────────────
     banner("STEP 2 — Preprocessing (clean → split → normalise)")
@@ -177,6 +204,7 @@ def main() -> None:
     print(f"    ✓ ESC-50 (480 audio clips)")
     print(f"    ✓ LibriSpeech (200 speech clips)")
     print(f"    ✓ HMDB-51 action videos (talk/wave/laugh/smoke vs sit/smile/drink)")
+    print(f"    ✓ Custom cheat video (personal real-world cheating behaviors)")
     print(f"  Total training samples: {len(X)}")
     print()
 
