@@ -1,254 +1,213 @@
 #!/usr/bin/env python3
 """
-insert_figures.py
-Automatically inserts the generated chart images into the IEEE paper docx,
-replacing every [IMAGE PLACEHOLDER] block with the correct figure.
+insert_figures.py  v3
+Finds every [IMAGE PLACEHOLDER] in the docx — including inside Word text boxes
+(shapes) — and replaces it with the correct figure at a print-ready size.
 
-Run in WSL (with venv active):
+Run in WSL (venv active):
+    cp /mnt/c/Users/kenne/Downloads/Multi_Modal_Cheating_Detection_IEEE_Paper.docx ~/invigilai/
     python3 insert_figures.py
 
-Source : ~/invigilai/Multi_Modal_Cheating_Detection_IEEE_Paper.docx
-         OR /mnt/c/Users/kenne/Downloads/Multi_Modal_Cheating_Detection_IEEE_Paper.docx
-Output : same folder, file named ..._WITH_FIGURES.docx
+Output: Multi_Modal_Cheating_Detection_IEEE_Paper_WITH_FIGURES.docx
+        (also copied to /mnt/c/Users/kenne/Downloads/)
 """
 
-import sys, re
+import re, sys, copy, shutil
 from pathlib import Path
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from lxml import etree
 
 # ── Locate source docx ────────────────────────────────────────────────────────
 CANDIDATES = [
+    Path.home() / "invigilai" / "Multi_Modal_Cheating_Detection_IEEE_Paper_FINAL.docx",
     Path.home() / "invigilai" / "Multi_Modal_Cheating_Detection_IEEE_Paper.docx",
-    Path("/mnt/c/Users/kenne/Downloads/Multi_Modal_Cheating_Detection_IEEE_Paper.docx"),
     Path("/mnt/c/Users/kenne/Downloads/Multi_Modal_Cheating_Detection_IEEE_Paper_FINAL.docx"),
-    Path.home() / "Downloads" / "Multi_Modal_Cheating_Detection_IEEE_Paper.docx",
-    Path.home() / "Downloads" / "Multi_Modal_Cheating_Detection_IEEE_Paper_FINAL.docx",
+    Path("/mnt/c/Users/kenne/Downloads/Multi_Modal_Cheating_Detection_IEEE_Paper.docx"),
 ]
-
-SRC = None
-for c in CANDIDATES:
-    if c.exists():
-        SRC = c
-        break
-
+SRC = next((c for c in CANDIDATES if c.exists()), None)
 if SRC is None:
-    print("ERROR: Could not find the docx file.")
-    print("Copy it to ~/invigilai/ and re-run:")
-    print("  cp /mnt/c/Users/kenne/Downloads/Multi_Modal_Cheating_Detection_IEEE_Paper.docx ~/invigilai/")
+    print("ERROR: docx not found. Copy it first:")
+    print("  cp /mnt/c/Users/kenne/Downloads/Multi_Modal_...docx ~/invigilai/")
     sys.exit(1)
 
-DEST = SRC.parent / (SRC.stem + "_WITH_FIGURES.docx")
+DEST      = SRC.parent / (SRC.stem + "_WITH_FIGURES.docx")
+CHARTS    = Path(__file__).parent / "paper_charts"
+WIN_DEST  = Path("/mnt/c/Users/kenne/Downloads") / DEST.name
 
-# ── Chart images folder ───────────────────────────────────────────────────────
-CHARTS_DIR = Path(__file__).parent / "paper_charts"
-
-# ── Figure → image mapping ────────────────────────────────────────────────────
-# Keys: substrings to search for in the placeholder caption text (case-insensitive)
-# Values: (image filename, display width in inches)
+# ── Figure map: (caption-pattern, image-file, width-inches) ──────────────────
+# Width guide (IEEE two-column):
+#   single column ≈ 3.3"   |   double column ≈ 6.8"
 FIGURE_MAP = [
-    # ── Architecture ──────────────────────────────────────────────────────────
-    ("fig. 1",           "paper_fig1_efficientnet_architecture.png", 6.5),
-    ("efficientnet",     "paper_fig1_efficientnet_architecture.png", 6.5),
-    ("mbconv",           "paper_fig1_efficientnet_architecture.png", 6.5),
-    # ── Training curves ───────────────────────────────────────────────────────
-    ("fig. 2",           "paper_fig2_training_accuracy.png",         5.5),
-    ("training.*accur",  "paper_fig2_training_accuracy.png",         5.5),
-    ("fig. 3",           "paper_fig3_training_loss.png",             5.5),
-    ("training.*loss",   "paper_fig3_training_loss.png",             5.5),
-    # ── Confusion matrix ──────────────────────────────────────────────────────
-    ("fig. 4",           "paper_fig4_confusion_matrix.png",          4.5),
-    ("confusion",        "paper_fig4_confusion_matrix.png",          4.5),
-    # ── PR / ROC curves ───────────────────────────────────────────────────────
-    ("fig. 5",           "paper_fig5_pr_curve.png",                  5.0),
-    ("precision.recall", "paper_fig5_pr_curve.png",                  5.0),
-    ("fig. 6",           "paper_fig6_roc_curve.png",                 5.0),
-    ("roc",              "paper_fig6_roc_curve.png",                 5.0),
-    # ── Ablation / modality ───────────────────────────────────────────────────
-    ("fig. 7",           "paper_fig7_per_modality_f1.png",           6.0),
-    ("per.modality",     "paper_fig7_per_modality_f1.png",           6.0),
-    ("modality.*f1",     "paper_fig7_per_modality_f1.png",           6.0),
-    ("ablation",         "paper_fig7_per_modality_f1.png",           5.5),
-    # ── NORMAL Grad-CAM / SHAP cases ─────────────────────────────────────────
-    ("fig. 8",           "paper_fig8_normal_case1.png",              6.5),
-    ("normal case 1",    "paper_fig8_normal_case1.png",              6.5),
-    ("shap summary.*right","paper_fig8_normal_case1.png",            6.5),
-    ("fig. 9",           "paper_fig9_normal_case2.png",              6.0),
-    ("normal case 2",    "paper_fig9_normal_case2.png",              6.0),
-    ("diffuse activation","paper_fig9_normal_case2.png",             6.0),
-    ("fig. 10",          "paper_fig10_normal_case3.png",             6.0),
-    ("normal case 3",    "paper_fig10_normal_case3.png",             6.0),
-    ("eye and mouth",    "paper_fig10_normal_case3.png",             6.0),
-    ("tab switching",    "paper_fig10_normal_case3.png",             6.0),
-    ("fig. 11",          "paper_fig11_normal_case4.png",             6.0),
-    ("normal case 4",    "paper_fig11_normal_case4.png",             6.0),
-    ("keystroke dynamics.*low","paper_fig11_normal_case4.png",       6.0),
-    # ── SUSPICIOUS Grad-CAM / SHAP cases ─────────────────────────────────────
-    ("fig. 12",          "paper_fig12_suspicious_gaze.png",          6.0),
-    ("suspicious case 1","paper_fig12_suspicious_gaze.png",          6.0),
-    ("gaze deviation",   "paper_fig12_suspicious_gaze.png",          6.0),
-    ("lateral gaze",     "paper_fig12_suspicious_gaze.png",          6.0),
-    ("fig. 13",          "paper_fig13_suspicious_audio.png",         6.0),
-    ("suspicious case 2","paper_fig13_suspicious_audio.png",         6.0),
-    ("audio anomaly",    "paper_fig13_suspicious_audio.png",         6.0),
-    ("mfcc energy",      "paper_fig13_suspicious_audio.png",         6.0),
-    ("fig. 14",          "paper_fig14_suspicious_keystroke.png",     6.0),
-    ("suspicious case 3","paper_fig14_suspicious_keystroke.png",     6.0),
-    ("keystroke anomaly","paper_fig14_suspicious_keystroke.png",     6.0),
-    ("copy.paste",       "paper_fig14_suspicious_keystroke.png",     6.0),
-    # ── Risk heatmap ──────────────────────────────────────────────────────────
-    ("fig. 16",          "paper_fig16_risk_heatmap.png",             6.5),
-    ("risk score heatmap","paper_fig16_risk_heatmap.png",            6.5),
-    ("temporal heatmap", "paper_fig16_risk_heatmap.png",             6.5),
-    ("per.student.*suspicion","paper_fig16_risk_heatmap.png",        6.5),
+    # Architecture
+    (r"fig\.?\s*1|efficientnet|mbconv",             "paper_fig1_efficientnet_architecture.png", 6.5),
+    # Training curves
+    (r"fig\.?\s*2|training.*accur|val.*accur",       "paper_fig2_training_accuracy.png",         5.8),
+    (r"fig\.?\s*3|training.*loss|val.*loss",         "paper_fig3_training_loss.png",             5.8),
+    # Confusion matrix
+    (r"fig\.?\s*4|confusion.matrix",                "paper_fig4_confusion_matrix.png",          3.8),
+    # PR / ROC
+    (r"fig\.?\s*5|precision.recall curve",          "paper_fig5_pr_curve.png",                  3.8),
+    (r"fig\.?\s*6|roc curve",                       "paper_fig6_roc_curve.png",                 3.8),
+    # Ablation / per-modality
+    (r"fig\.?\s*7|per.modality|modality.*f1|ablation", "paper_fig7_per_modality_f1.png",        5.8),
+    # NORMAL Grad-CAM cases
+    (r"fig\.?\s*8|normal case 1|shap summary.*right", "paper_fig8_normal_case1.png",            5.8),
+    (r"fig\.?\s*9|normal case 2|diffuse activation",  "paper_fig9_normal_case2.png",            5.8),
+    (r"fig\.?\s*10|normal case 3|eye and mouth|tab switching", "paper_fig10_normal_case3.png",  5.8),
+    (r"fig\.?\s*11|normal case 4|keystroke dynamics.*low",     "paper_fig11_normal_case4.png",  5.8),
+    # SUSPICIOUS Grad-CAM cases
+    (r"fig\.?\s*12|suspicious case 1|gaze deviation|lateral gaze", "paper_fig12_suspicious_gaze.png",       5.8),
+    (r"fig\.?\s*13|suspicious case 2|audio anomaly|mfcc energy",   "paper_fig13_suspicious_audio.png",      5.8),
+    (r"fig\.?\s*14|suspicious case 3|keystroke anomaly|copy.paste","paper_fig14_suspicious_keystroke.png",  5.8),
+    # Risk heatmap
+    (r"fig\.?\s*16|risk score heatmap|temporal heatmap|per.student.*suspicion", "paper_fig16_risk_heatmap.png", 6.5),
 ]
 
 
 def match_figure(text: str):
-    """Return (image_path, width_inches) for the best matching figure, or None."""
     t = text.lower()
     for pattern, fname, width in FIGURE_MAP:
         if re.search(pattern, t):
-            p = CHARTS_DIR / fname
-            if not p.exists():
-                # try relative path in case fname has subdir prefix
-                p = Path(__file__).parent / fname
+            p = CHARTS / fname
             if p.exists():
                 return p, width
     return None
 
 
-def collect_placeholder_blocks(doc):
-    """
-    Returns list of (paragraph_index, window_text, para_objects_in_block).
-    A 'block' is the [IMAGE PLACEHOLDER] para plus the next few caption paras.
-    """
-    paras = doc.paragraphs
-    blocks = []
-    i = 0
-    while i < len(paras):
-        txt = paras[i].text
-        if "[image placeholder]" in txt.lower():
-            # collect this para + up to 4 following paras as the caption window
-            window = paras[i: i+5]
-            window_text = " ".join(p.text for p in window)
-            blocks.append((i, window_text, window))
-            i += 1
-        else:
-            i += 1
-    return blocks
+def _get_para_text(p_elem):
+    return "".join((t.text or "") for t in p_elem.iter(qn("w:t")))
 
 
-def replace_paragraph_with_image(doc, para, img_path, width_in):
+def _add_image_paragraph(doc, img_path, width_in):
     """
-    Replace the content of `para` with a centred inline image.
-    The paragraph element is modified in-place.
+    Append a centred image paragraph at the END of the doc body,
+    return its lxml element (caller will move it to the right place).
     """
-    # Clear existing runs
-    for run in para.runs:
-        run.text = ""
-    # Clear all child XML (removes leftover text nodes)
-    p_elem = para._element
-    for child in list(p_elem):
-        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-        if tag in ("r", "hyperlink", "bookmarkStart", "bookmarkEnd", "proofErr"):
-            p_elem.remove(child)
-
-    # Set paragraph alignment to centre
-    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # Add image run
-    run = para.add_run()
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run()
     run.add_picture(str(img_path), width=Inches(width_in))
+    elem = p._element
+    # Detach from body so we can re-attach elsewhere
+    doc.element.body.remove(elem)
+    return elem
 
 
-def process_table_cells(doc):
-    """Also check tables for IMAGE PLACEHOLDER content."""
-    replaced = 0
-    for tbl in doc.tables:
-        for row in tbl.rows:
-            for cell in row.cells:
-                paras = cell.paragraphs
-                for i, para in enumerate(paras):
-                    if "[image placeholder]" in para.text.lower():
-                        # build window from surrounding cell paragraphs
-                        window_text = " ".join(p.text for p in paras[i:i+5])
-                        result = match_figure(window_text)
-                        if result:
-                            img_path, width = result
-                            replace_paragraph_with_image(doc, para, img_path, width)
-                            # blank out the caption sub-paras inside the block
-                            for cp in paras[i+1:i+4]:
-                                if cp.text.strip().lower().startswith(("fig.", "replace")):
-                                    for run in cp.runs:
-                                        run.text = ""
-                            print(f"    [table] Inserted {img_path.name}")
-                            replaced += 1
-    return replaced
+def _replace_elem(old_elem, new_elem):
+    """Replace old_elem with new_elem in its parent."""
+    parent = old_elem.getparent()
+    idx    = list(parent).index(old_elem)
+    parent.remove(old_elem)
+    parent.insert(idx, new_elem)
+
+
+def _blank_caption_siblings(p_elem, n=4):
+    """
+    Blank out up to n sibling paragraphs after p_elem that contain
+    'replace with' or are short italic captions — we want to keep the
+    figure caption but remove the 'Replace with actual image' lines.
+    """
+    parent  = p_elem.getparent()
+    siblings = list(parent)
+    try:
+        start = siblings.index(p_elem) + 1
+    except ValueError:
+        return
+    for sib in siblings[start: start + n]:
+        tag = sib.tag.split("}")[-1] if "}" in sib.tag else sib.tag
+        if tag != "p":
+            break
+        txt = _get_para_text(sib).strip().lower()
+        if txt.startswith("replace with") or txt == "replace with actual image":
+            for t in sib.iter(qn("w:t")):
+                t.text = ""
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    print(f"Source  : {SRC}")
-    print(f"Output  : {DEST}")
-    print(f"Charts  : {CHARTS_DIR}")
+    print(f"Source  : {SRC.name}")
+    print(f"Output  : {DEST.name}")
+    print(f"Charts  : {CHARTS}/")
     print()
 
-    if not CHARTS_DIR.exists():
-        print(f"ERROR: Charts folder not found: {CHARTS_DIR}")
-        print("Run: python3 generate_paper_figures.py")
+    if not CHARTS.exists():
+        print("ERROR: paper_charts/ not found — run generate_paper_figures.py first.")
         sys.exit(1)
 
     doc = Document(str(SRC))
 
-    # ── Replace in main body paragraphs ──────────────────────────────────────
-    blocks = collect_placeholder_blocks(doc)
-    print(f"Found {len(blocks)} IMAGE PLACEHOLDER(s) in main body.")
+    # ── Collect ALL placeholder paragraph elements (incl. text boxes) ─────────
+    placeholders = []
+    for p_elem in doc.element.body.iter(qn("w:p")):
+        txt = _get_para_text(p_elem)
+        if "[image placeholder]" in txt.lower():
+            # Build context: this para + next 4 siblings
+            parent   = p_elem.getparent()
+            siblings = list(parent)
+            try:
+                idx = siblings.index(p_elem)
+            except ValueError:
+                idx = 0
+            window = siblings[idx: idx + 5]
+            context = " ".join(_get_para_text(s) for s in window
+                               if s.tag == qn("w:p"))
+            placeholders.append((p_elem, context))
 
-    body_replaced = 0
-    for idx, window_text, window_paras in blocks:
-        result = match_figure(window_text)
+    print(f"Found {len(placeholders)} [IMAGE PLACEHOLDER](s) in document.\n")
+
+    replaced = 0
+    for p_elem, context in placeholders:
+        result = match_figure(context)
         if result is None:
-            print(f"  [!] Could not match figure for: {window_text[:80]!r}")
+            print(f"  [!] No match for: {context[:80]!r}")
             continue
+
         img_path, width = result
-        main_para = window_paras[0]
-        replace_paragraph_with_image(doc, main_para, img_path, width)
-        # Blank caption sub-lines that say "Replace with actual image"
-        for cp in window_paras[1:4]:
-            if re.search(r"replace with|fig\.\s*\d", cp.text, re.I):
-                for run in cp.runs:
-                    run.text = ""
-        print(f"  [body] Inserted {img_path.name}  (matched: {window_text[:60]!r})")
-        body_replaced += 1
+        img_elem = _add_image_paragraph(doc, img_path, width)
+        _replace_elem(p_elem, img_elem)
+        _blank_caption_siblings(img_elem)
+        print(f"  [OK] {img_path.name}  ({width}\")")
+        replaced += 1
 
-    # ── Replace in table cells ────────────────────────────────────────────────
-    table_replaced = process_table_cells(doc)
+    print(f"\nReplaced: {replaced} / {len(placeholders)} placeholder(s).")
 
-    total = body_replaced + table_replaced
-    print(f"\nTotal replaced: {total} figure(s).")
+    if replaced == 0:
+        print("\nWARNING: Nothing was replaced.")
+        print("The placeholders may use a non-standard character — try running:")
+        print("  python3 insert_figures.py --debug")
+        print("to see the raw text of each paragraph in the document.")
+        sys.exit(1)
 
-    if total == 0:
-        print("\nWARNING: No placeholders were replaced.")
-        print("This can happen if the placeholders are inside text boxes (shapes).")
-        print("In that case, insert images manually:")
-        print("  - Click the IMAGE PLACEHOLDER box")
-        print("  - Insert tab --> Pictures --> This Device")
-        print("  - Select from:", CHARTS_DIR)
-    else:
-        doc.save(str(DEST))
-        print(f"\nSaved: {DEST}")
-        # Also copy to Windows Downloads
-        win_dest = Path("/mnt/c/Users/kenne/Downloads") / DEST.name
-        try:
-            import shutil
-            shutil.copy(str(DEST), str(win_dest))
-            print(f"Copied to: {win_dest}")
-        except Exception as e:
-            print(f"(Could not copy to Downloads: {e})")
+    doc.save(str(DEST))
+    print(f"\nSaved: {DEST}")
+
+    try:
+        WIN_DEST.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(str(DEST), str(WIN_DEST))
+        print(f"Copied to: {WIN_DEST}")
+    except Exception as e:
+        print(f"(Windows copy failed: {e})")
+
+    print("\nDone.")
+
+
+# ── Debug mode ────────────────────────────────────────────────────────────────
+def debug():
+    """Print every paragraph in the doc that might be a placeholder."""
+    doc = Document(str(SRC))
+    print(f"Scanning {SRC.name} ...\n")
+    for i, p_elem in enumerate(doc.element.body.iter(qn("w:p"))):
+        txt = _get_para_text(p_elem).strip()
+        if txt and ("placeholder" in txt.lower() or "image" in txt.lower()
+                    or "fig." in txt.lower() or "replace" in txt.lower()):
+            print(f"  [{i:04d}] {txt[:120]!r}")
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--debug":
+        debug()
+    else:
+        main()
