@@ -162,43 +162,75 @@ def main():
 
     print(f"Total paragraphs scanned: {n}")
 
-    # ── Find placeholders and match figures ───────────────────────────────────
+    # ── Find all IMAGE PLACEHOLDER positions (in document order) ─────────────
+    placeholder_indices = [
+        i for i, txt in enumerate(all_text)
+        if "[image placeholder]" in txt.lower()
+    ]
+    print(f"Found {len(placeholder_indices)} IMAGE PLACEHOLDER(s)")
+    print(f"FIGURE_MAP has {len(FIGURE_MAP)} entries\n")
+
+    # ── Positional match: pair placeholders with FIGURE_MAP entries by index ──
+    # This is order-based — Fig 1 placeholder → FIGURE_MAP[0], etc.
+    # Falls back to regex context match if counts differ.
     jobs = []   # (placeholder_para_idx, img_path, width, [cleanup_indices])
-    for i, txt in enumerate(all_text):
-        if "[image placeholder]" not in txt.lower():
-            continue
 
-        # Build context from NEXT 4 paragraphs in document order (not siblings)
-        context = " ".join(all_text[i+1 : i+5])
+    if len(placeholder_indices) == len(FIGURE_MAP):
+        print("  Using positional matching (counts match)\n")
+        for seq, i in enumerate(placeholder_indices):
+            _, fname, width = FIGURE_MAP[seq]
+            img_path = CHARTS / fname
+            if not img_path.exists():
+                print(f"  [!] Image file not found: {fname}")
+                continue
 
-        result = _match(context)
-        if result is None:
-            # Try broader context (sometimes caption is further away)
-            context2 = " ".join(all_text[i : i+8])
-            result = _match(context2)
+            # Find cleanup indices
+            cleanup = []
+            caption_seen = False
+            for j in range(i+1, min(i+6, n)):
+                t = all_text[j].strip().lower()
+                if t.startswith("replace with"):
+                    cleanup.append(j)
+                elif re.match(r"fig\.?\s*\d|figure\s*\d", t):
+                    if caption_seen:
+                        cleanup.append(j)
+                    else:
+                        caption_seen = True
 
-        if result is None:
-            print(f"  [!] No match — context: {context[:80]!r}")
-            continue
+            jobs.append((i, img_path, width, cleanup))
+            print(f"  [{seq+1:02d}] para[{i:04d}] → {fname}")
 
-        img_path, width = result
+    else:
+        print(f"  Count mismatch — falling back to regex context matching\n")
+        for i, txt in enumerate(all_text):
+            if "[image placeholder]" not in txt.lower():
+                continue
 
-        # Find cleanup indices: "Replace with actual image" and duplicate captions
-        cleanup = []
-        caption_seen = False
-        for j in range(i+1, min(i+6, n)):
-            t = all_text[j].strip().lower()
-            if t.startswith("replace with"):
-                cleanup.append(j)
-            elif re.match(r"fig\.?\s*\d", t):
-                if caption_seen:
-                    cleanup.append(j)   # duplicate caption
-                else:
-                    caption_seen = True
+            context = " ".join(all_text[i+1 : i+5])
+            result = _match(context)
+            if result is None:
+                context2 = " ".join(all_text[i : i+8])
+                result = _match(context2)
 
-        jobs.append((i, img_path, width, cleanup))
+            if result is None:
+                print(f"  [!] No match at para[{i}] — context: {context[:80]!r}")
+                continue
 
-    print(f"Matched {len(jobs)} placeholder(s).\n")
+            img_path, width = result
+            cleanup = []
+            caption_seen = False
+            for j in range(i+1, min(i+6, n)):
+                t = all_text[j].strip().lower()
+                if t.startswith("replace with"):
+                    cleanup.append(j)
+                elif re.match(r"fig\.?\s*\d|figure\s*\d", t):
+                    if caption_seen:
+                        cleanup.append(j)
+                    else:
+                        caption_seen = True
+            jobs.append((i, img_path, width, cleanup))
+
+    print(f"\nMatched {len(jobs)} placeholder(s).\n")
 
     # ── Apply replacements ────────────────────────────────────────────────────
     replaced = 0
