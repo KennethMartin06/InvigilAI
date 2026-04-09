@@ -267,6 +267,164 @@ REPLACEMENTS = {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# DISCREPANCY FIXES  — replace inaccurate paper claims with what is actually
+# implemented in the codebase.  Ordered longest → shortest to avoid partial
+# matches shadowing full phrases.
+# ════════════════════════════════════════════════════════════════════════════
+DISCREPANCY_FIXES = {
+
+    # ── Visual / Gaze: CNN → MediaPipe Face Mesh ──────────────────────────────
+    "a convolutional neural network (CNN) to extract gaze and head-pose features":
+        "MediaPipe Face Mesh (468 landmarks) to extract gaze and head-pose features",
+
+    "convolutional neural network (CNN) for gaze estimation":
+        "MediaPipe Face Mesh landmark-based gaze estimation",
+
+    "CNN-based gaze estimation":
+        "MediaPipe Face Mesh landmark-based gaze estimation",
+
+    "CNN-based visual feature extraction":
+        "MediaPipe Face Mesh landmark-based visual feature extraction",
+
+    "convolutional neural network for visual feature extraction":
+        "MediaPipe Face Mesh (468 facial landmarks) for visual feature extraction",
+
+    "deep convolutional features for gaze":
+        "iris landmark offset ratios for gaze",
+
+    "CNN to extract visual":
+        "MediaPipe Face Mesh to extract visual",
+
+    "CNN extracts":
+        "MediaPipe Face Mesh extracts",
+
+    "deep CNN":
+        "MediaPipe Face Mesh",
+
+    "ResNet-based":
+        "MediaPipe Face Mesh-based",
+
+    "VGG-based":
+        "MediaPipe Face Mesh-based",
+
+    "CNN backbone":
+        "MediaPipe Face Mesh landmark extractor",
+
+    # ── Audio: U-Net / LSTM → sklearn MLP + MFCC ────────────────────────────
+    "U-Net architecture for audio":
+        "sklearn MLPClassifier with 55-dimensional MFCC features for audio",
+
+    "U-Net-based audio classifier":
+        "MFCC-based sklearn MLPClassifier for audio classification",
+
+    "U-Net audio":
+        "MFCC + MLP audio",
+
+    "LSTM-based audio":
+        "MFCC-based sklearn MLP audio",
+
+    "LSTM for audio":
+        "sklearn MLPClassifier with 55-dim MFCC features for audio",
+
+    "recurrent neural network for audio":
+        "sklearn MLPClassifier with 55-dimensional MFCC features for audio",
+
+    "recurrent neural network (RNN) for audio":
+        "sklearn MLPClassifier with 55-dimensional MFCC features for audio",
+
+    "U-Net":
+        "MFCC + sklearn MLP",
+
+    "audio encoder-decoder":
+        "MFCC feature extractor with MLP classifier",
+
+    "encoder-decoder audio":
+        "MFCC + MLP audio",
+
+    # ── Explainability: SHAP / Grad-CAM → class probabilities ───────────────
+    "SHAP (SHapley Additive exPlanations) values":
+        "class probability distributions (5-class softmax output)",
+
+    "SHAP values are computed":
+        "class probability distributions are computed",
+
+    "SHAP values to explain":
+        "class probability scores to explain",
+
+    "SHAP-based explainability":
+        "probability-based explainability",
+
+    "Shapley values":
+        "class probability scores",
+
+    "SHAP":
+        "class probability output",
+
+    "Gradient-weighted Class Activation Mapping (Grad-CAM)":
+        "class probability distribution and YOLOv8 phone-detection confidence",
+
+    "Grad-CAM visualisation":
+        "class probability distribution",
+
+    "Grad-CAM visualization":
+        "class probability distribution",
+
+    "Grad-CAM saliency":
+        "class probability score",
+
+    "Grad-CAM":
+        "class probability output",
+
+    "class activation map":
+        "class probability distribution",
+
+    "saliency map":
+        "class probability score",
+
+    "saliency maps":
+        "class probability scores",
+
+    # ── Screen monitoring: remove/redirect to future work ────────────────────
+    "screen activity monitoring module":
+        "screen activity monitoring module (planned as future work)",
+
+    "screen activity is monitored":
+        "screen activity monitoring is planned as future work",
+
+    "monitors screen activity":
+        "will monitor screen activity in a future release",
+
+    "screen monitoring subsystem":
+        "screen monitoring subsystem (planned for future work)",
+
+    "screen content is analysed":
+        "screen content analysis is planned as future work",
+
+    "screen content is analyzed":
+        "screen content analysis is planned as future work",
+
+    "screen capture":
+        "screen capture (future work)",
+
+    # ── Audio architecture details ─────────────────────────────────────────────
+    "deep learning audio classifier":
+        "sklearn MLPClassifier with 55-dimensional MFCC feature vector",
+
+    "end-to-end audio neural network":
+        "MFCC-based sklearn MLPClassifier (hidden layers: 128, 64)",
+
+    "audio deep learning model":
+        "audio MFCC + sklearn MLP model",
+
+    # ── Generic CNN catch-all (must come after specific ones above) ──────────
+    "convolutional neural network (CNN)":
+        "MediaPipe Face Mesh landmark extractor",
+
+    "convolutional neural network":
+        "MediaPipe Face Mesh landmark extractor",
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # DATASET CITATIONS  (IEEE format)
 # ════════════════════════════════════════════════════════════════════════════
 DATASET_REFS = [
@@ -379,6 +537,10 @@ def main():
     n = replace_all(doc, REPLACEMENTS)
     print(f"  {n} paragraph(s) updated.")
 
+    print("Fixing inaccurate descriptions (CNN→MediaPipe, U-Net→MLP+MFCC, SHAP→probabilities) ...")
+    n2 = replace_all(doc, DISCREPANCY_FIXES)
+    print(f"  {n2} paragraph(s) corrected.")
+
     # Check for any remaining [PLACEHOLDER] occurrences
     remaining = []
     for p in doc.paragraphs:
@@ -404,9 +566,10 @@ def main():
     doc.save(str(DEST))
     print(f"\nSaved to:\n  {DEST}")
     print("\nDone. Open the FINAL file and:")
-    print("  1. Fill in author block manually.")
-    print("  2. Review sections about CNN/U-Net/SHAP — update to match actual implementation.")
-    print("  3. Replace IMAGE PLACEHOLDER boxes with actual charts from the charts/ folder.")
+    print("  1. Fill in author block manually (names, emails, affiliations).")
+    print("  2. Manually review any remaining CNN/U-Net/SHAP references the regex may have missed.")
+    print("  3. Replace IMAGE PLACEHOLDER boxes with actual charts from the paper_charts/ folder.")
+    print("  4. Re-read the abstract and conclusion — update any accuracy figures to 93.74% / F1 94.64%.")
 
 
 if __name__ == "__main__":
