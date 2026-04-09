@@ -28,13 +28,13 @@ OUT_DIR.mkdir(exist_ok=True)
 
 STYLE = {
     "font.family": "serif",
-    "font.size": 11,
-    "axes.titlesize": 13,
+    "font.size": 12,
+    "axes.titlesize": 14,
     "axes.labelsize": 11,
     "xtick.labelsize": 10,
     "ytick.labelsize": 10,
     "legend.fontsize": 10,
-    "figure.dpi": 200,
+    "figure.dpi": 300,
     "axes.grid": True,
     "grid.alpha": 0.3,
     "axes.spines.top": False,
@@ -54,7 +54,7 @@ LGRAY  = "#E5E7EB"
 
 def save(fig, name):
     p = OUT_DIR / name
-    fig.savefig(p, dpi=200, bbox_inches="tight", facecolor="white")
+    fig.savefig(p, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  Saved: {name}")
 
@@ -92,7 +92,7 @@ def fig1_efficientnet():
     plt.rcParams["axes.grid"] = False
 
     fig, (ax_l, ax_r) = plt.subplots(
-        1, 2, figsize=(15, 11),
+        1, 2, figsize=(14, 10),
         gridspec_kw={"width_ratios": [1, 1], "wspace": 0.14},
     )
     for ax in (ax_l, ax_r):
