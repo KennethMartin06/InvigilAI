@@ -123,7 +123,7 @@ REPLACEMENTS = {
 DATASET_REFS = [
     '[D1] K. S. Killourhy and R. A. Maxion, "Comparing Anomaly-Detection Algorithms for Keystroke Dynamics," in Proc. IEEE/IFIP Int. Conf. Dependable Systems & Networks (DSN), 2009, pp. 125–134.',
     '[D2] X. Zhang, Y. Sugano, M. Fritz, and A. Bulling, "Appearance-Based Gaze Estimation in the Wild," in Proc. IEEE Conf. Computer Vision and Pattern Recognition (CVPR), 2015, pp. 4511–4520.',
-    '[D3] A. Gupta, A. D'Cunha, K. Awasthi, and V. Balasubramanian, "DAiSEE: Towards User Engagement Recognition in the Wild," arXiv:1609.01885, 2016.',
+    "[D3] A. Gupta, A. D'Cunha, K. Awasthi, and V. Balasubramanian, \"DAiSEE: Towards User Engagement Recognition in the Wild,\" arXiv:1609.01885, 2016.",
     '[D4] K. J. Piczak, "ESC: Dataset for Environmental Sound Classification," in Proc. ACM Int. Conf. Multimedia (MM), 2015, pp. 1015–1018.',
     '[D5] V. Panayotov, G. Chen, D. Povey, and S. Khudanpur, "LibriSpeech: An ASR Corpus Based on Public Domain Audio Books," in Proc. IEEE Int. Conf. Acoustics, Speech and Signal Processing (ICASSP), 2015, pp. 5206–5210.',
     '[D6] H. Kuehne, H. Jhuang, E. Garrote, T. Poggio, and T. Serre, "HMDB: A Large Video Database for Human Motion Recognition," in Proc. IEEE Int. Conf. Computer Vision (ICCV), 2011, pp. 2556–2563.',
