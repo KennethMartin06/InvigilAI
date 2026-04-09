@@ -41,29 +41,50 @@ WIN_DEST  = Path("/mnt/c/Users/kenne/Downloads") / DEST.name
 # Width guide (IEEE two-column):
 #   single column ≈ 3.3"   |   double column ≈ 6.8"
 FIGURE_MAP = [
-    # Architecture
-    (r"fig\.?\s*1|efficientnet|mbconv",             "paper_fig1_efficientnet_architecture.png", 6.5),
-    # Training curves
-    (r"fig\.?\s*2|training.*accur|val.*accur",       "paper_fig2_training_accuracy.png",         5.8),
-    (r"fig\.?\s*3|training.*loss|val.*loss",         "paper_fig3_training_loss.png",             5.8),
-    # Confusion matrix
-    (r"fig\.?\s*4|confusion.matrix",                "paper_fig4_confusion_matrix.png",          3.8),
-    # PR / ROC
-    (r"fig\.?\s*5|precision.recall curve",          "paper_fig5_pr_curve.png",                  3.8),
-    (r"fig\.?\s*6|roc curve",                       "paper_fig6_roc_curve.png",                 3.8),
-    # Ablation / per-modality
-    (r"fig\.?\s*7|per.modality|modality.*f1|ablation", "paper_fig7_per_modality_f1.png",        5.8),
-    # NORMAL Grad-CAM cases
-    (r"fig\.?\s*8|normal case 1|shap summary.*right", "paper_fig8_normal_case1.png",            5.8),
-    (r"fig\.?\s*9|normal case 2|diffuse activation",  "paper_fig9_normal_case2.png",            5.8),
-    (r"fig\.?\s*10|normal case 3|eye and mouth|tab switching", "paper_fig10_normal_case3.png",  5.8),
-    (r"fig\.?\s*11|normal case 4|keystroke dynamics.*low",     "paper_fig11_normal_case4.png",  5.8),
-    # SUSPICIOUS Grad-CAM cases
-    (r"fig\.?\s*12|suspicious case 1|gaze deviation|lateral gaze", "paper_fig12_suspicious_gaze.png",       5.8),
-    (r"fig\.?\s*13|suspicious case 2|audio anomaly|mfcc energy",   "paper_fig13_suspicious_audio.png",      5.8),
-    (r"fig\.?\s*14|suspicious case 3|keystroke anomaly|copy.paste","paper_fig14_suspicious_keystroke.png",  5.8),
-    # Risk heatmap
-    (r"fig\.?\s*16|risk score heatmap|temporal heatmap|per.student.*suspicion", "paper_fig16_risk_heatmap.png", 6.5),
+    # ── Architecture (full-width, double-column) ──────────────────────────────
+    (r"fig\.?\s*1\b|efficientnet|mbconv",
+        "paper_fig1_efficientnet_architecture.png", 6.3),
+    # ── Training curves ───────────────────────────────────────────────────────
+    (r"fig\.?\s*2\b|training.*accur",
+        "paper_fig2_training_accuracy.png",         3.2),
+    (r"fig\.?\s*3\b|training.*loss",
+        "paper_fig3_training_loss.png",             3.2),
+    # ── Confusion matrix ──────────────────────────────────────────────────────
+    (r"fig\.?\s*4\b|confusion.matrix",
+        "paper_fig4_confusion_matrix.png",          3.0),
+    # ── PR / ROC ──────────────────────────────────────────────────────────────
+    (r"fig\.?\s*5\b|precision.recall curve",
+        "paper_fig5_pr_curve.png",                  3.0),
+    (r"fig\.?\s*6\b|roc curve",
+        "paper_fig6_roc_curve.png",                 3.0),
+    # ── Ablation / per-modality ───────────────────────────────────────────────
+    (r"fig\.?\s*7\b|per.modality|modality.*f1|ablation",
+        "paper_fig7_per_modality_f1.png",           3.2),
+    # ── NORMAL Grad-CAM / SHAP ────────────────────────────────────────────────
+    (r"fig\.?\s*8\b|normal case 1|shap summary.*right",
+        "paper_fig8_normal_case1.png",              3.2),
+    (r"fig\.?\s*9\b|normal case 2|diffuse activation",
+        "paper_fig9_normal_case2.png",              3.2),
+    (r"fig\.?\s*10\b|normal case 3|eye and mouth|tab switching",
+        "paper_fig10_normal_case3.png",             3.2),
+    (r"fig\.?\s*11\b|normal case 4|keystroke dynamics",
+        "paper_fig11_normal_case4.png",             3.2),
+    # ── SUSPICIOUS Grad-CAM / SHAP ────────────────────────────────────────────
+    (r"fig\.?\s*12\b|suspicious case 1|gaze deviation",
+        "paper_fig12_suspicious_gaze.png",          3.2),
+    (r"fig\.?\s*13\b|suspicious case 2|audio anomaly",
+        "paper_fig13_suspicious_audio.png",         3.2),
+    (r"fig\.?\s*14\b|suspicious case 3|keystroke anomaly|copy.paste",
+        "paper_fig14_suspicious_keystroke.png",     3.2),
+    # ── Dashboard / UI figures ────────────────────────────────────────────────
+    (r"fig\.?\s*15\b|monitoring dashboard|active sessions grid",
+        "paper_fig15_dashboard.png",               6.3),
+    (r"fig\.?\s*16\b|risk score heatmap|temporal heatmap",
+        "paper_fig16_risk_heatmap.png",            6.3),
+    (r"fig\.?\s*17\b|alert panel|flagged sessions|alert feed",
+        "paper_fig17_alert_panel.png",             6.3),
+    (r"fig\.?\s*18\b|session replay|evidence timeline",
+        "paper_fig18_session_replay.png",          6.3),
 ]
 
 
@@ -104,26 +125,42 @@ def _replace_elem(old_elem, new_elem):
     parent.insert(idx, new_elem)
 
 
-def _blank_caption_siblings(p_elem, n=4):
+def _blank_caption_siblings(p_elem, n=5):
     """
-    Blank out up to n sibling paragraphs after p_elem that contain
-    'replace with' or are short italic captions — we want to keep the
-    figure caption but remove the 'Replace with actual image' lines.
+    After inserting an image, clean up the following paragraphs:
+    - Delete 'Replace with actual image' lines entirely
+    - Delete duplicate captions (same text as the one right after the image)
+    - Keep only ONE clean Fig. N caption
     """
-    parent  = p_elem.getparent()
+    parent   = p_elem.getparent()
     siblings = list(parent)
     try:
         start = siblings.index(p_elem) + 1
     except ValueError:
         return
+
+    first_caption_seen = False
     for sib in siblings[start: start + n]:
         tag = sib.tag.split("}")[-1] if "}" in sib.tag else sib.tag
         if tag != "p":
             break
-        txt = _get_para_text(sib).strip().lower()
-        if txt.startswith("replace with") or txt == "replace with actual image":
+        txt = _get_para_text(sib).strip()
+        low = txt.lower()
+
+        # Always delete "Replace with actual image"
+        if low.startswith("replace with"):
             for t in sib.iter(qn("w:t")):
                 t.text = ""
+            continue
+
+        # Keep first Fig. caption, delete any duplicate of it
+        if re.match(r"fig\.?\s*\d", low):
+            if first_caption_seen:
+                # duplicate — delete it
+                for t in sib.iter(qn("w:t")):
+                    t.text = ""
+            else:
+                first_caption_seen = True
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

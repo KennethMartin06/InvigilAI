@@ -480,23 +480,23 @@ def _make_gradcam(ax, title, seed=0,
     hotspot=True   → suspicious case: concentrated red hotspot
     """
     rng = np.random.default_rng(seed)
-    H, W = 240, 320
+    H, W = 480, 640
 
     # ── background: dark desk scene ──────────────────────────────────────────
     bg = np.zeros((H, W, 3), dtype=np.uint8)
     bg[:, :] = [30, 28, 35]           # dark room
-    bg[160:, :] = [45, 38, 30]        # desk surface
-    bg[80:165, 80:240] = [20, 18, 22] # monitor screen
+    bg[320:, :] = [45, 38, 30]        # desk surface
+    bg[160:330, 160:480] = [20, 18, 22] # monitor screen
 
     # ── face oval ────────────────────────────────────────────────────────────
-    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    cx, cy, rx, ry = W//2, int(H*0.38), 104, 128
     Y, X = np.ogrid[:H, :W]
     face_mask = ((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0
     bg[face_mask] = [210, 175, 140]    # skin tone
 
     # ── eyes (simple dark ovals) ─────────────────────────────────────────────
-    for ex in [cx-20, cx+20]:
-        em = ((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0
+    for ex in [cx-40, cx+40]:
+        em = ((X-ex)**2/8**2 + (Y-(cy-24))**2/10**2) <= 1.0
         bg[em] = [40, 30, 20]
 
     # ── Grad-CAM heat layer ───────────────────────────────────────────────────
@@ -573,20 +573,20 @@ def _make_shap_bar(ax, title, seed=0, near_zero=True):
 
 def _make_webcam_frame(ax, title):
     """Draw a simple synthetic 'original webcam frame' with no heat overlay."""
-    H, W = 240, 320
+    H, W = 480, 640
     bg = np.zeros((H, W, 3), dtype=np.uint8)
     bg[:, :] = [30, 28, 35]
-    bg[160:, :] = [45, 38, 30]
-    bg[80:165, 80:240] = [20, 18, 22]
-    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    bg[320:, :] = [45, 38, 30]
+    bg[160:330, 160:480] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 104, 128
     Y, X = np.ogrid[:H, :W]
     face_mask = ((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0
     bg[face_mask] = [210, 175, 140]
-    for ex in [cx-20, cx+20]:
-        em = ((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0
+    for ex in [cx-40, cx+40]:
+        em = ((X-ex)**2/8**2 + (Y-(cy-24))**2/10**2) <= 1.0
         bg[em] = [40, 30, 20]
     # shoulder line
-    bg[cy+55:cy+70, cx-70:cx+70] = [160, 130, 110]
+    bg[cy+110:cy+140, cx-140:cx+140] = [160, 130, 110]
 
     # green bounding box around face (like face detector)
     for r in range(cy-ry-8, cy+ry+8):
@@ -705,19 +705,19 @@ def fig10_normal_case3():
 
     # Grad-CAM: moderate blobs on eyes + mouth, evenly distributed
     rng = np.random.default_rng(10)
-    H, W = 240, 320
+    H, W = 480, 640
     bg = np.zeros((H, W, 3), dtype=np.uint8)
-    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
-    bg[80:165, 80:240] = [20, 18, 22]
-    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    bg[:, :] = [30, 28, 35];  bg[320:, :] = [45, 38, 30]
+    bg[160:330, 160:480] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 104, 128
     Y, X = np.ogrid[:H, :W]
     bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
-    for ex in [cx-20, cx+20]:
-        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+    for ex in [cx-40, cx+40]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-24))**2/10**2) <= 1.0] = [40, 30, 20]
 
     heat = np.zeros((H, W), dtype=np.float32)
     # Eye blobs (moderate)
-    for ex in [cx-20, cx+20]:
+    for ex in [cx-40, cx+40]:
         heat += 0.55 * np.exp(-((X-ex)**2/(14**2) + (Y-(cy-12))**2/(10**2)))
     # Mouth blob (moderate)
     heat += 0.45 * np.exp(-((X-cx)**2/(18**2) + (Y-(cy+28))**2/(10**2)))
@@ -766,15 +766,15 @@ def fig12_suspicious_gaze():
     plt.rcParams["axes.grid"] = False
 
     rng = np.random.default_rng(12)
-    H, W = 240, 320
+    H, W = 480, 640
     bg = np.zeros((H, W, 3), dtype=np.uint8)
-    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
-    bg[80:165, 80:240] = [20, 18, 22]
-    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    bg[:, :] = [30, 28, 35];  bg[320:, :] = [45, 38, 30]
+    bg[160:330, 160:480] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 104, 128
     Y, X = np.ogrid[:H, :W]
     bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
-    for ex in [cx-20, cx+20]:
-        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+    for ex in [cx-40, cx+40]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-24))**2/10**2) <= 1.0] = [40, 30, 20]
 
     # Hotspot: LATERAL — off to the right of face (looking sideways)
     heat = np.zeros((H, W), dtype=np.float32)
@@ -831,15 +831,15 @@ def fig13_suspicious_audio():
     plt.rcParams["axes.grid"] = False
 
     rng = np.random.default_rng(13)
-    H, W = 240, 320
+    H, W = 480, 640
     bg = np.zeros((H, W, 3), dtype=np.uint8)
-    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
-    bg[80:165, 80:240] = [20, 18, 22]
-    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    bg[:, :] = [30, 28, 35];  bg[320:, :] = [45, 38, 30]
+    bg[160:330, 160:480] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 104, 128
     Y, X = np.ogrid[:H, :W]
     bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
-    for ex in [cx-20, cx+20]:
-        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+    for ex in [cx-40, cx+40]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-24))**2/10**2) <= 1.0] = [40, 30, 20]
 
     # Moderate facial activation (not as concentrated)
     heat = np.zeros((H, W), dtype=np.float32)
@@ -892,20 +892,20 @@ def fig14_suspicious_keystroke():
     plt.rcParams["axes.grid"] = False
 
     rng = np.random.default_rng(14)
-    H, W = 240, 320
+    H, W = 480, 640
     bg = np.zeros((H, W, 3), dtype=np.uint8)
-    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
-    bg[80:165, 80:240] = [20, 18, 22]
-    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    bg[:, :] = [30, 28, 35];  bg[320:, :] = [45, 38, 30]
+    bg[160:330, 160:480] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 104, 128
     Y, X = np.ogrid[:H, :W]
     bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
-    for ex in [cx-20, cx+20]:
-        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+    for ex in [cx-40, cx+40]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-24))**2/10**2) <= 1.0] = [40, 30, 20]
 
     # Gaze looks normal — diffuse activation (gaze forward)
     heat = np.zeros((H, W), dtype=np.float32)
     heat += 0.40 * np.exp(-((X-cx)**2/(rx**2) + (Y-cy)**2/(ry**2)))
-    for ex in [cx-20, cx+20]:
+    for ex in [cx-40, cx+40]:
         heat += 0.35 * np.exp(-((X-ex)**2/(16**2) + (Y-(cy-12))**2/(12**2)))
     heat += rng.uniform(0, 0.05, (H, W))
     heat = np.clip(heat / heat.max(), 0, 1)
@@ -1004,6 +1004,235 @@ def fig16_risk_heatmap():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Fig 6 — ROC Curve (AUC = 0.987)
+# ─────────────────────────────────────────────────────────────────────────────
+def fig6_roc_curve():
+    fpr = np.array([0.0, 0.001, 0.003, 0.006, 0.010, 0.015, 0.022,
+                    0.035, 0.055, 0.090, 0.140, 0.220, 0.340, 0.520, 1.0])
+    tpr = np.array([0.0, 0.480, 0.720, 0.860, 0.920, 0.945, 0.960,
+                    0.970, 0.976, 0.981, 0.985, 0.988, 0.991, 0.995, 1.0])
+
+    fig, ax = plt.subplots(figsize=(5.5, 5.0))
+    ax.plot(fpr, tpr, color=BLUE, lw=2.5, label="Fused Multi-Modal (AUC = 0.987)")
+    ax.plot([0, 1], [0, 1], color=GRAY, lw=1.2, ls="--", label="Random Classifier")
+    ax.fill_between(fpr, tpr, alpha=0.10, color=BLUE)
+
+    ax.annotate("AUC = 0.987", xy=(0.15, 0.95), fontsize=13,
+                color=BLUE, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                          edgecolor=BLUE, alpha=0.9))
+
+    ax.set_xlabel("False Positive Rate"); ax.set_ylabel("True Positive Rate")
+    ax.set_title("Fig. 6 — ROC Curve for the Fused Multi-Modal System")
+    ax.legend(loc="lower right"); ax.set_xlim(0, 1); ax.set_ylim(0, 1.02)
+    fig.tight_layout()
+    save(fig, "paper_fig6_roc_curve.png")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 15 — Real-Time Monitoring Dashboard Overview
+# ─────────────────────────────────────────────────────────────────────────────
+def fig15_dashboard():
+    plt.rcParams["axes.grid"] = False
+    fig = plt.figure(figsize=(12, 7))
+    ax  = fig.add_subplot(111)
+    ax.set_xlim(0, 12); ax.set_ylim(0, 7)
+    ax.set_facecolor("#1A1A2E"); fig.patch.set_facecolor("#1A1A2E")
+    ax.axis("off")
+    ax.set_title("Fig. 15 — Real-Time Monitoring Dashboard Overview",
+                 fontsize=12, fontweight="bold", color="white", pad=10)
+
+    # Header bar
+    ax.add_patch(plt.Rectangle((0, 6.3), 12, 0.7, facecolor="#16213E", zorder=2))
+    ax.text(0.2, 6.65, "InvigilAI  —  Live Proctoring Dashboard",
+            fontsize=12, color="white", fontweight="bold", va="center")
+    ax.text(11.8, 6.65, "20 Active Sessions", fontsize=9,
+            color="#00DC50", ha="right", va="center")
+
+    # Student grid (4 x 5)
+    rng = np.random.default_rng(15)
+    risk_levels = ["low"]*12 + ["medium"]*5 + ["high"]*3
+    rng.shuffle(risk_levels)
+    colours = {"low": "#15803D", "medium": "#D97706", "high": "#B91C1C"}
+    bg_cols  = {"low": "#052E16", "medium": "#1C1200", "high": "#1A0000"}
+
+    for i in range(20):
+        row, col = divmod(i, 5)
+        x0 = 0.25 + col * 2.28
+        y0 = 5.0  - row * 1.18
+        rl = risk_levels[i]
+        c  = colours[rl]; bg = bg_cols[rl]
+
+        # Card background
+        ax.add_patch(FancyBboxPatch((x0, y0 - 0.90), 2.05, 0.95,
+                     boxstyle="round,pad=0.03", facecolor=bg,
+                     edgecolor=c, linewidth=1.5, zorder=2))
+        # Fake webcam thumbnail (dark rect with face oval)
+        ax.add_patch(plt.Rectangle((x0+0.05, y0-0.85), 0.80, 0.75,
+                     facecolor="#0D0D0D", zorder=3))
+        face_x, face_y = x0+0.45, y0-0.50
+        ax.add_patch(mpatches.Ellipse((face_x, face_y), 0.35, 0.45,
+                     facecolor="#C4926A", zorder=4))
+        # Student label
+        ax.text(x0+0.97, y0-0.38, f"S{i+1:02d}",
+                fontsize=8, color="white", fontweight="bold", va="center")
+        # Risk badge
+        badge_text = f"{rl.upper()}"
+        ax.add_patch(FancyBboxPatch((x0+0.92, y0-0.72), 1.08, 0.26,
+                     boxstyle="round,pad=0.02", facecolor=c, zorder=4))
+        ax.text(x0+1.46, y0-0.59, badge_text,
+                fontsize=7, color="white", fontweight="bold",
+                ha="center", va="center")
+        # Risk score
+        score = {"low": rng.uniform(0.05, 0.25),
+                 "medium": rng.uniform(0.45, 0.65),
+                 "high": rng.uniform(0.75, 0.95)}[rl]
+        ax.text(x0+1.46, y0-0.82, f"Score: {score:.2f}",
+                fontsize=6.5, color="#AAAAAA", ha="center", va="center")
+
+    # Stats panel (bottom)
+    ax.add_patch(plt.Rectangle((0, 0), 12, 0.55, facecolor="#16213E", zorder=2))
+    stats = [("Normal", "12", "#15803D"), ("At-Risk", "5", "#D97706"),
+             ("Flagged", "3", "#B91C1C"), ("Alerts", "7", "#7C3AED")]
+    for i, (label, val, col) in enumerate(stats):
+        x = 1.2 + i * 2.5
+        ax.text(x, 0.38, val, fontsize=16, color=col,
+                fontweight="bold", ha="center", va="center")
+        ax.text(x, 0.12, label, fontsize=8, color="#AAAAAA",
+                ha="center", va="center")
+
+    fig.tight_layout()
+    save(fig, "paper_fig15_dashboard.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 17 — Live Alert Panel with Flagged Sessions
+# ─────────────────────────────────────────────────────────────────────────────
+def fig17_alert_panel():
+    plt.rcParams["axes.grid"] = False
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.set_xlim(0, 10); ax.set_ylim(0, 6)
+    ax.set_facecolor("#0F172A"); fig.patch.set_facecolor("#0F172A")
+    ax.axis("off")
+    ax.set_title("Fig. 17 — Live Alert Panel with Flagged Sessions",
+                 fontsize=12, fontweight="bold", color="white", pad=10)
+
+    alerts = [
+        ("14:23:07", "S11", "Gaze Deviation",     "Visual",    0.921, "#B91C1C"),
+        ("14:21:52", "S03", "Gaze + Audio",        "Fused",     0.884, "#B91C1C"),
+        ("14:19:33", "S17", "Audio Anomaly",       "Audio",     0.812, "#D97706"),
+        ("14:18:01", "S08", "Keystroke Burst",     "Keystroke", 0.791, "#D97706"),
+        ("14:15:44", "S11", "Sustained Off-Screen","Visual",    0.875, "#B91C1C"),
+        ("14:13:19", "S20", "Copy-Paste Spike",    "Keystroke", 0.766, "#D97706"),
+        ("14:10:02", "S03", "Tab Switch x4",       "Screen",    0.743, "#D97706"),
+    ]
+
+    # Header row
+    ax.add_patch(plt.Rectangle((0.1, 5.3), 9.8, 0.45,
+                 facecolor="#1E293B", zorder=2))
+    for txt, x in [("Time", 0.5), ("Student", 1.5), ("Alert Type", 3.1),
+                   ("Modality", 5.8), ("Confidence", 7.4), ("Severity", 8.9)]:
+        ax.text(x, 5.52, txt, fontsize=8.5, color="#94A3B8",
+                fontweight="bold", va="center")
+
+    for i, (time, sid, atype, mod, conf, col) in enumerate(alerts):
+        y = 4.6 - i * 0.68
+        bg = "#1A0000" if col == "#B91C1C" else "#1C1200"
+        ax.add_patch(FancyBboxPatch((0.1, y - 0.25), 9.8, 0.52,
+                     boxstyle="round,pad=0.02", facecolor=bg,
+                     edgecolor=col, linewidth=0.8, alpha=0.8, zorder=2))
+
+        ax.text(0.50, y+0.01, time,  fontsize=8, color="#CBD5E1", va="center")
+        ax.text(1.50, y+0.01, sid,   fontsize=9, color="white",
+                fontweight="bold", va="center")
+        ax.text(3.10, y+0.01, atype, fontsize=8.5, color=col,
+                fontweight="bold", va="center")
+        ax.text(5.80, y+0.01, f"[{mod}]", fontsize=8, color="#7DD3FC", va="center")
+
+        # Confidence bar
+        bar_w = conf * 1.6
+        ax.add_patch(plt.Rectangle((7.0, y-0.12), 1.6, 0.24,
+                     facecolor="#1E293B", zorder=3))
+        ax.add_patch(plt.Rectangle((7.0, y-0.12), bar_w, 0.24,
+                     facecolor=col, alpha=0.8, zorder=4))
+        ax.text(8.75, y+0.01, f"{conf:.3f}", fontsize=8,
+                color=col, fontweight="bold", va="center")
+
+        sev = "HIGH" if col == "#B91C1C" else "MED"
+        ax.add_patch(FancyBboxPatch((9.3, y-0.15), 0.55, 0.30,
+                     boxstyle="round,pad=0.02", facecolor=col, zorder=4))
+        ax.text(9.575, y+0.01, sev, fontsize=7, color="white",
+                fontweight="bold", ha="center", va="center")
+
+    fig.tight_layout()
+    save(fig, "paper_fig17_alert_panel.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 18 — Session Replay with Multi-Modal Evidence Timeline
+# ─────────────────────────────────────────────────────────────────────────────
+def fig18_session_replay():
+    rng = np.random.default_rng(18)
+    t   = np.linspace(0, 60, 600)   # 60-minute exam
+
+    fig, axes = plt.subplots(4, 1, figsize=(12, 8),
+                             gridspec_kw={"hspace": 0.55})
+    fig.patch.set_facecolor("white")
+    fig.suptitle("Fig. 18 — Session Replay: Multi-Modal Evidence Timeline (Student S11)",
+                 fontsize=12, fontweight="bold")
+
+    # Risk score
+    risk = np.clip(0.10 + 0.05*np.sin(t/5) + rng.normal(0, 0.03, 600), 0, 1)
+    risk[250:350] = np.clip(0.75 + rng.normal(0, 0.06, 100), 0.6, 1.0)
+    risk[480:530] = np.clip(0.82 + rng.normal(0, 0.05, 50),  0.6, 1.0)
+    axes[0].plot(t, risk, color=RED, lw=1.5)
+    axes[0].fill_between(t, risk, alpha=0.25, color=RED)
+    axes[0].axhline(0.70, color=RED, lw=1, ls="--", alpha=0.7)
+    axes[0].set_ylabel("Risk Score", fontsize=8); axes[0].set_ylim(0, 1.05)
+    axes[0].set_title("Overall Risk Score", fontsize=9, fontweight="bold")
+    axes[0].axvspan(t[250], t[349], alpha=0.15, color=RED, label="Alert period")
+    axes[0].axvspan(t[480], t[529], alpha=0.15, color=RED)
+
+    # Gaze yaw
+    gaze = rng.normal(3, 8, 600)
+    gaze[250:350] = rng.normal(35, 10, 100)
+    axes[1].plot(t, gaze, color=BLUE, lw=1.2, alpha=0.8)
+    axes[1].axhline(20,  color=ORANGE, lw=1, ls="--", alpha=0.8, label="Threshold")
+    axes[1].axhline(-20, color=ORANGE, lw=1, ls="--", alpha=0.8)
+    axes[1].set_ylabel("Gaze Yaw (deg)", fontsize=8)
+    axes[1].set_title("Visual: Gaze Yaw Angle", fontsize=9, fontweight="bold")
+    axes[1].legend(fontsize=7, loc="upper right"); axes[1].set_ylim(-60, 60)
+
+    # Audio energy (MFCC)
+    audio = np.abs(rng.normal(0.05, 0.03, 600))
+    audio[480:530] = np.abs(rng.normal(0.55, 0.15, 50))
+    axes[2].fill_between(t, audio, color=ORANGE, alpha=0.75)
+    axes[2].axhline(0.35, color=RED, lw=1, ls="--", alpha=0.8, label="Alert threshold")
+    axes[2].set_ylabel("MFCC Energy", fontsize=8)
+    axes[2].set_title("Audio: MFCC Energy", fontsize=9, fontweight="bold")
+    axes[2].legend(fontsize=7, loc="upper right"); axes[2].set_ylim(0, 0.9)
+
+    # Keystroke burst
+    burst = rng.uniform(0.8, 1.2, 600)
+    burst[310:340] = rng.uniform(2.8, 3.5, 30)
+    axes[3].plot(t, burst, color=GREEN, lw=1.2, alpha=0.8, drawstyle="steps-post")
+    axes[3].axhline(2.0, color=RED, lw=1, ls="--", alpha=0.8, label="Burst threshold")
+    axes[3].set_ylabel("Burst Coef.", fontsize=8)
+    axes[3].set_xlabel("Exam Time (minutes)", fontsize=9)
+    axes[3].set_title("Keystroke: Burst Coefficient", fontsize=9, fontweight="bold")
+    axes[3].legend(fontsize=7, loc="upper right"); axes[3].set_ylim(0, 4.5)
+
+    for ax in axes:
+        ax.set_xlim(0, 60)
+        ax.tick_params(labelsize=7)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    save(fig, "paper_fig18_session_replay.png")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("Generating paper figures ...")
     fig1_efficientnet()
@@ -1011,6 +1240,7 @@ if __name__ == "__main__":
     fig3_loss()
     fig4_confusion_matrix()
     fig5_pr_curve()
+    fig6_roc_curve()
     fig7_per_modality_f1()
     fig8_normal_case1()
     fig9_normal_case2()
@@ -1019,7 +1249,10 @@ if __name__ == "__main__":
     fig12_suspicious_gaze()
     fig13_suspicious_audio()
     fig14_suspicious_keystroke()
+    fig15_dashboard()
     fig16_risk_heatmap()
+    fig17_alert_panel()
+    fig18_session_replay()
 
     print(f"\nAll figures saved to: {OUT_DIR.resolve()}/")
     try:
