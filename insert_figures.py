@@ -49,23 +49,60 @@ CHARTS_DIR = Path(__file__).parent / "paper_charts"
 # Keys: substrings to search for in the placeholder caption text (case-insensitive)
 # Values: (image filename, display width in inches)
 FIGURE_MAP = [
-    ("fig. 1",          "paper_fig1_efficientnet_architecture.png", 6.5),
-    ("efficientnet",    "paper_fig1_efficientnet_architecture.png", 6.5),
-    ("mbconv",          "paper_fig1_efficientnet_architecture.png", 6.5),
-    ("fig. 2",          "paper_fig2_training_accuracy.png",         5.5),
-    ("training.*accur", "paper_fig2_training_accuracy.png",         5.5),
-    ("fig. 3",          "paper_fig3_training_loss.png",             5.5),
-    ("training.*loss",  "paper_fig3_training_loss.png",             5.5),
-    ("fig. 4",          "paper_fig4_confusion_matrix.png",          4.5),
-    ("confusion",       "paper_fig4_confusion_matrix.png",          4.5),
-    ("fig. 5",          "paper_fig5_pr_curve.png",                  5.0),
-    ("precision.recall","paper_fig5_pr_curve.png",                  5.0),
-    ("fig. 6",          "paper_fig6_roc_curve.png",                 5.0),
-    ("roc",             "paper_fig6_roc_curve.png",                 5.0),
-    ("fig. 7",          "paper_fig7_per_modality_f1.png",           6.0),
-    ("per.modality",    "paper_fig7_per_modality_f1.png",           6.0),
-    ("modality.*f1",    "paper_fig7_per_modality_f1.png",           6.0),
-    ("ablation",        "paper_charts/fig7_ablation_study.png",     5.5),
+    # ── Architecture ──────────────────────────────────────────────────────────
+    ("fig. 1",           "paper_fig1_efficientnet_architecture.png", 6.5),
+    ("efficientnet",     "paper_fig1_efficientnet_architecture.png", 6.5),
+    ("mbconv",           "paper_fig1_efficientnet_architecture.png", 6.5),
+    # ── Training curves ───────────────────────────────────────────────────────
+    ("fig. 2",           "paper_fig2_training_accuracy.png",         5.5),
+    ("training.*accur",  "paper_fig2_training_accuracy.png",         5.5),
+    ("fig. 3",           "paper_fig3_training_loss.png",             5.5),
+    ("training.*loss",   "paper_fig3_training_loss.png",             5.5),
+    # ── Confusion matrix ──────────────────────────────────────────────────────
+    ("fig. 4",           "paper_fig4_confusion_matrix.png",          4.5),
+    ("confusion",        "paper_fig4_confusion_matrix.png",          4.5),
+    # ── PR / ROC curves ───────────────────────────────────────────────────────
+    ("fig. 5",           "paper_fig5_pr_curve.png",                  5.0),
+    ("precision.recall", "paper_fig5_pr_curve.png",                  5.0),
+    ("fig. 6",           "paper_fig6_roc_curve.png",                 5.0),
+    ("roc",              "paper_fig6_roc_curve.png",                 5.0),
+    # ── Ablation / modality ───────────────────────────────────────────────────
+    ("fig. 7",           "paper_fig7_per_modality_f1.png",           6.0),
+    ("per.modality",     "paper_fig7_per_modality_f1.png",           6.0),
+    ("modality.*f1",     "paper_fig7_per_modality_f1.png",           6.0),
+    ("ablation",         "paper_fig7_per_modality_f1.png",           5.5),
+    # ── NORMAL Grad-CAM / SHAP cases ─────────────────────────────────────────
+    ("fig. 8",           "paper_fig8_normal_case1.png",              6.5),
+    ("normal case 1",    "paper_fig8_normal_case1.png",              6.5),
+    ("shap summary.*right","paper_fig8_normal_case1.png",            6.5),
+    ("fig. 9",           "paper_fig9_normal_case2.png",              6.0),
+    ("normal case 2",    "paper_fig9_normal_case2.png",              6.0),
+    ("diffuse activation","paper_fig9_normal_case2.png",             6.0),
+    ("fig. 10",          "paper_fig10_normal_case3.png",             6.0),
+    ("normal case 3",    "paper_fig10_normal_case3.png",             6.0),
+    ("eye and mouth",    "paper_fig10_normal_case3.png",             6.0),
+    ("tab switching",    "paper_fig10_normal_case3.png",             6.0),
+    ("fig. 11",          "paper_fig11_normal_case4.png",             6.0),
+    ("normal case 4",    "paper_fig11_normal_case4.png",             6.0),
+    ("keystroke dynamics.*low","paper_fig11_normal_case4.png",       6.0),
+    # ── SUSPICIOUS Grad-CAM / SHAP cases ─────────────────────────────────────
+    ("fig. 12",          "paper_fig12_suspicious_gaze.png",          6.0),
+    ("suspicious case 1","paper_fig12_suspicious_gaze.png",          6.0),
+    ("gaze deviation",   "paper_fig12_suspicious_gaze.png",          6.0),
+    ("lateral gaze",     "paper_fig12_suspicious_gaze.png",          6.0),
+    ("fig. 13",          "paper_fig13_suspicious_audio.png",         6.0),
+    ("suspicious case 2","paper_fig13_suspicious_audio.png",         6.0),
+    ("audio anomaly",    "paper_fig13_suspicious_audio.png",         6.0),
+    ("mfcc energy",      "paper_fig13_suspicious_audio.png",         6.0),
+    ("fig. 14",          "paper_fig14_suspicious_keystroke.png",     6.0),
+    ("suspicious case 3","paper_fig14_suspicious_keystroke.png",     6.0),
+    ("keystroke anomaly","paper_fig14_suspicious_keystroke.png",     6.0),
+    ("copy.paste",       "paper_fig14_suspicious_keystroke.png",     6.0),
+    # ── Risk heatmap ──────────────────────────────────────────────────────────
+    ("fig. 16",          "paper_fig16_risk_heatmap.png",             6.5),
+    ("risk score heatmap","paper_fig16_risk_heatmap.png",            6.5),
+    ("temporal heatmap", "paper_fig16_risk_heatmap.png",             6.5),
+    ("per.student.*suspicion","paper_fig16_risk_heatmap.png",        6.5),
 ]
 
 

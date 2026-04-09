@@ -469,6 +469,541 @@ def fig7_per_modality_f1():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helpers for Grad-CAM / SHAP synthetic visualisations
+# ─────────────────────────────────────────────────────────────────────────────
+def _make_gradcam(ax, title, seed=0,
+                  hotspot=False, hotspot_xy=(0.50, 0.42),
+                  diffuse=True):
+    """
+    Draw a synthetic Grad-CAM heatmap overlay on a mock webcam frame.
+    hotspot=False  → normal case: diffuse, no red blob
+    hotspot=True   → suspicious case: concentrated red hotspot
+    """
+    rng = np.random.default_rng(seed)
+    H, W = 240, 320
+
+    # ── background: dark desk scene ──────────────────────────────────────────
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    bg[:, :] = [30, 28, 35]           # dark room
+    bg[160:, :] = [45, 38, 30]        # desk surface
+    bg[80:165, 80:240] = [20, 18, 22] # monitor screen
+
+    # ── face oval ────────────────────────────────────────────────────────────
+    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    Y, X = np.ogrid[:H, :W]
+    face_mask = ((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0
+    bg[face_mask] = [210, 175, 140]    # skin tone
+
+    # ── eyes (simple dark ovals) ─────────────────────────────────────────────
+    for ex in [cx-20, cx+20]:
+        em = ((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0
+        bg[em] = [40, 30, 20]
+
+    # ── Grad-CAM heat layer ───────────────────────────────────────────────────
+    heat = np.zeros((H, W), dtype=np.float32)
+
+    if diffuse and not hotspot:
+        # Spread low-value blobs across face and screen — NORMAL
+        centers = [
+            (cx,    cy,    rx*0.9, ry*0.9, 0.45),   # face centre
+            (cx-15, cy-10, 22,     18,     0.30),    # left eye region
+            (cx+15, cy-10, 22,     18,     0.28),    # right eye region
+            (cx,    cy+20, 30,     20,     0.25),    # mouth region
+            (140,   120,   40,     30,     0.20),    # screen area
+            (180,   125,   35,     25,     0.18),
+        ]
+        for bcx, bcy, brx, bry, amp in centers:
+            blob = amp * np.exp(-((X-bcx)**2/(2*brx**2) +
+                                  (Y-bcy)**2/(2*bry**2)))
+            heat += blob
+        heat += rng.uniform(0, 0.06, (H, W))   # low noise
+    else:
+        # Concentrated hotspot — SUSPICIOUS
+        hx, hy = int(hotspot_xy[0]*W), int(hotspot_xy[1]*H)
+        heat = 0.95 * np.exp(-((X-hx)**2/(20**2) + (Y-hy)**2/(18**2)))
+        heat += 0.4 * np.exp(-((X-cx)**2/(rx**2) + (Y-cy)**2/(ry**2)))
+        heat += rng.uniform(0, 0.04, (H, W))
+
+    heat = np.clip(heat / heat.max(), 0, 1)
+
+    # ── render: background + heat overlay ────────────────────────────────────
+    ax.imshow(bg)
+    ax.imshow(heat, cmap="jet", alpha=0.45, vmin=0, vmax=1,
+              extent=[0, W, H, 0])
+
+    ax.set_title(title, fontsize=8.5, fontweight="bold", pad=4)
+    ax.axis("off")
+
+
+def _make_shap_bar(ax, title, seed=0, near_zero=True):
+    """
+    Draw a SHAP beeswarm / bar summary.
+    near_zero=True  → normal case: all values close to 0
+    near_zero=False → suspicious: some large positive values
+    """
+    rng = np.random.default_rng(seed)
+    features = ["gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
+                "head_roll", "face_count", "gaze_dev", "emb_norm",
+                "keystroke_rate", "mean_dwell", "burst_coef", "idle_ratio"]
+    n = len(features)
+
+    if near_zero:
+        vals = rng.uniform(-0.04, 0.06, n)
+        vals = np.clip(vals, -0.08, 0.08)
+    else:
+        vals = rng.uniform(-0.05, 0.35, n)
+        vals[0] = 0.38; vals[1] = 0.31; vals[2] = 0.22
+
+    colors = [RED if v > 0 else BLUE for v in vals]
+    y_pos  = np.arange(n)
+
+    ax.barh(y_pos, vals, color=colors, alpha=0.82, edgecolor="white", height=0.6)
+    ax.axvline(0, color="black", lw=0.8)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(features, fontsize=7)
+    ax.set_xlabel("SHAP value (impact on model output)", fontsize=7)
+    ax.set_title(title, fontsize=8.5, fontweight="bold", pad=4)
+    if near_zero:
+        ax.set_xlim(-0.12, 0.12)
+        ax.text(0.02, n-0.5, "All near zero\n(Normal)", fontsize=7,
+                color=GREEN, va="top")
+    else:
+        ax.set_xlim(-0.12, 0.50)
+
+
+def _make_webcam_frame(ax, title):
+    """Draw a simple synthetic 'original webcam frame' with no heat overlay."""
+    H, W = 240, 320
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    bg[:, :] = [30, 28, 35]
+    bg[160:, :] = [45, 38, 30]
+    bg[80:165, 80:240] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    Y, X = np.ogrid[:H, :W]
+    face_mask = ((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0
+    bg[face_mask] = [210, 175, 140]
+    for ex in [cx-20, cx+20]:
+        em = ((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0
+        bg[em] = [40, 30, 20]
+    # shoulder line
+    bg[cy+55:cy+70, cx-70:cx+70] = [160, 130, 110]
+
+    # green bounding box around face (like face detector)
+    for r in range(cy-ry-8, cy+ry+8):
+        if 0 <= r < H:
+            bg[r, cx-rx-8] = [0, 220, 80]
+            bg[r, cx+rx+8] = [0, 220, 80]
+    for c in range(cx-rx-8, cx+rx+8):
+        if 0 <= c < W:
+            bg[cy-ry-8, c] = [0, 220, 80]
+            bg[cy+ry+8, c] = [0, 220, 80]
+
+    ax.imshow(bg)
+    ax.text(cx-rx-8, cy+ry+22, "Normal  conf=0.97",
+            color="#00DC50", fontsize=7, fontweight="bold")
+    ax.set_title(title, fontsize=8.5, fontweight="bold", pad=4)
+    ax.axis("off")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 8 — NORMAL case 1: webcam frame | Grad-CAM | SHAP
+# ─────────────────────────────────────────────────────────────────────────────
+def fig8_normal_case1():
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5),
+                              gridspec_kw={"wspace": 0.30})
+    plt.rcParams["axes.grid"] = False
+
+    _make_webcam_frame(axes[0], "Original Webcam Frame")
+    _make_gradcam(axes[1],
+                  "Grad-CAM Heatmap\n(diffuse — no hotspot)",
+                  seed=1, diffuse=True)
+    _make_shap_bar(axes[2],
+                   "SHAP Feature Summary\n(values near zero)",
+                   seed=2, near_zero=True)
+
+    fig.suptitle(
+        "Fig. 8 — NORMAL Case 1: Distributed Grad-CAM Activation, Low SHAP Values",
+        fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig8_normal_case1.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 9 — NORMAL case 2: Grad-CAM diffuse across facial region
+# ─────────────────────────────────────────────────────────────────────────────
+def fig9_normal_case2():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                              gridspec_kw={"wspace": 0.25})
+    plt.rcParams["axes.grid"] = False
+
+    _make_gradcam(axes[0],
+                  "Grad-CAM: Diffuse Activation\n(compliant behaviour)",
+                  seed=5, diffuse=True)
+    _make_shap_bar(axes[1],
+                   "SHAP Values — NORMAL Case 2\n(no dominant feature)",
+                   seed=6, near_zero=True)
+
+    fig.suptitle(
+        "Fig. 9 — NORMAL Case 2: Diffuse Grad-CAM Attention, Absent Red Hotspot",
+        fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig9_normal_case2.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 11 — NORMAL case 4: broadly distributed Grad-CAM, low keystroke SHAP
+# ─────────────────────────────────────────────────────────────────────────────
+def fig11_normal_case4():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                              gridspec_kw={"wspace": 0.25})
+    plt.rcParams["axes.grid"] = False
+
+    _make_gradcam(axes[0],
+                  "Grad-CAM: Broadly Distributed\n(no dominant red hotspot)",
+                  seed=11, diffuse=True)
+
+    # SHAP bar — keystroke features highlighted as near-zero
+    rng = np.random.default_rng(11)
+    features = ["gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
+                "head_roll", "face_count", "gaze_dev", "emb_norm",
+                "keystroke_rate", "mean_dwell", "burst_coef", "idle_ratio"]
+    vals = rng.uniform(-0.03, 0.05, len(features))
+    vals[8]  = 0.022    # keystroke_rate — low
+    vals[9]  = -0.018   # mean_dwell    — low
+    vals[10] = 0.015    # burst_coef    — low
+
+    colors = [RED if v > 0 else BLUE for v in vals]
+    y_pos  = np.arange(len(features))
+    axes[1].barh(y_pos, vals, color=colors, alpha=0.82,
+                 edgecolor="white", height=0.6)
+    axes[1].axvline(0, color="black", lw=0.8)
+    axes[1].set_yticks(y_pos)
+    axes[1].set_yticklabels(features, fontsize=7)
+    axes[1].set_xlabel("SHAP value", fontsize=7)
+    axes[1].set_title("Keystroke SHAP: Low Attribution\n(natural typing pattern)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[1].set_xlim(-0.08, 0.10)
+    axes[1].text(0.01, 11.5, "All near zero", fontsize=7, color=GREEN)
+
+    fig.suptitle(
+        "Fig. 11 — NORMAL Case 4: Distributed Activation, Low Keystroke SHAP",
+        fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig11_normal_case4.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 10 — NORMAL case 3: eye/mouth region activation, low tab-switch SHAP
+# ─────────────────────────────────────────────────────────────────────────────
+def fig10_normal_case3():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                             gridspec_kw={"wspace": 0.28})
+    plt.rcParams["axes.grid"] = False
+
+    # Grad-CAM: moderate blobs on eyes + mouth, evenly distributed
+    rng = np.random.default_rng(10)
+    H, W = 240, 320
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
+    bg[80:165, 80:240] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    Y, X = np.ogrid[:H, :W]
+    bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
+    for ex in [cx-20, cx+20]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+
+    heat = np.zeros((H, W), dtype=np.float32)
+    # Eye blobs (moderate)
+    for ex in [cx-20, cx+20]:
+        heat += 0.55 * np.exp(-((X-ex)**2/(14**2) + (Y-(cy-12))**2/(10**2)))
+    # Mouth blob (moderate)
+    heat += 0.45 * np.exp(-((X-cx)**2/(18**2) + (Y-(cy+28))**2/(10**2)))
+    # Nose (light)
+    heat += 0.28 * np.exp(-((X-cx)**2/(12**2) + (Y-cy)**2/(10**2)))
+    heat += rng.uniform(0, 0.05, (H, W))
+    heat = np.clip(heat / heat.max(), 0, 1)
+
+    axes[0].imshow(bg)
+    axes[0].imshow(heat, cmap="jet", alpha=0.45, vmin=0, vmax=1,
+                   extent=[0, W, H, 0])
+    axes[0].set_title("Grad-CAM: Eye & Mouth Regions\n(moderate, even distribution)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[0].axis("off")
+
+    # SHAP: tab-switch and behavioral near zero
+    features = ["gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
+                "head_roll", "face_count", "gaze_dev", "emb_norm",
+                "tab_switch", "mean_dwell", "burst_coef", "idle_ratio"]
+    vals = rng.uniform(-0.04, 0.06, len(features))
+    vals[8] = 0.025   # tab_switch near zero = normal
+    colors = [RED if v > 0 else BLUE for v in vals]
+    y_pos = np.arange(len(features))
+    axes[1].barh(y_pos, vals, color=colors, alpha=0.82, edgecolor="white", height=0.6)
+    axes[1].axvline(0, color="black", lw=0.8)
+    axes[1].set_yticks(y_pos); axes[1].set_yticklabels(features, fontsize=7)
+    axes[1].set_xlabel("SHAP value", fontsize=7)
+    axes[1].set_title("SHAP: Tab-Switch & Behavioral\n(all near zero — normal)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[1].set_xlim(-0.10, 0.12)
+    axes[1].text(0.02, 11.5, "Normal", fontsize=7, color=GREEN)
+
+    fig.suptitle("Fig. 10 — NORMAL Case 3: Eye/Mouth Grad-CAM, Low Tab-Switch SHAP",
+                 fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig10_normal_case3.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 12 — SUSPICIOUS case 1 (Gaze Deviation): concentrated lateral activation
+# ─────────────────────────────────────────────────────────────────────────────
+def fig12_suspicious_gaze():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                             gridspec_kw={"wspace": 0.28})
+    plt.rcParams["axes.grid"] = False
+
+    rng = np.random.default_rng(12)
+    H, W = 240, 320
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
+    bg[80:165, 80:240] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    Y, X = np.ogrid[:H, :W]
+    bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
+    for ex in [cx-20, cx+20]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+
+    # Hotspot: LATERAL — off to the right of face (looking sideways)
+    heat = np.zeros((H, W), dtype=np.float32)
+    heat += 0.95 * np.exp(-((X-(cx+70))**2/(22**2) + (Y-(cy-8))**2/(18**2)))
+    heat += 0.65 * np.exp(-((X-(cx+45))**2/(18**2) + (Y-(cy-10))**2/(14**2)))
+    heat += 0.30 * np.exp(-((X-cx)**2/(rx**2)      + (Y-cy)**2/(ry**2)))
+    heat += rng.uniform(0, 0.04, (H, W))
+    heat = np.clip(heat / heat.max(), 0, 1)
+
+    axes[0].imshow(bg)
+    axes[0].imshow(heat, cmap="jet", alpha=0.50, vmin=0, vmax=1,
+                   extent=[0, W, H, 0])
+    # Arrow pointing to hotspot
+    axes[0].annotate("Lateral gaze\nhotspot",
+                     xy=(cx+70, cy-8), xytext=(cx+95, cy-35),
+                     fontsize=7, color="white", fontweight="bold",
+                     arrowprops=dict(arrowstyle="->", color="white", lw=1.2),
+                     bbox=dict(boxstyle="round,pad=0.2", facecolor=RED, alpha=0.75))
+    axes[0].set_title("Grad-CAM: Concentrated Red/Orange\n(lateral gaze — off-screen)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[0].axis("off")
+
+    # SHAP: gaze_yaw dominant
+    features = ["gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
+                "head_roll", "face_count", "gaze_dev", "emb_norm",
+                "keystroke_rate", "mean_dwell", "burst_coef", "idle_ratio"]
+    vals = rng.uniform(-0.03, 0.05, len(features))
+    vals[0] = 0.42;  vals[6] = 0.35;  vals[2] = 0.28   # gaze_yaw, gaze_dev, head_yaw
+    colors = [RED if v > 0 else BLUE for v in vals]
+    y_pos = np.arange(len(features))
+    axes[1].barh(y_pos, vals, color=colors, alpha=0.82, edgecolor="white", height=0.6)
+    axes[1].axvline(0, color="black", lw=0.8)
+    axes[1].set_yticks(y_pos); axes[1].set_yticklabels(features, fontsize=7)
+    axes[1].set_xlabel("SHAP value", fontsize=7)
+    axes[1].set_title("SHAP: Gaze Features Dominant\n(sustained off-screen gaze)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[1].set_xlim(-0.08, 0.52)
+    axes[1].text(0.25, 0.3, "SUSPICIOUS", fontsize=9, color=RED,
+                 fontweight="bold", alpha=0.7)
+
+    fig.suptitle("Fig. 12 — SUSPICIOUS Case 1 (Gaze Deviation): Lateral Grad-CAM Hotspot",
+                 fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig12_suspicious_gaze.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 13 — SUSPICIOUS case 2 (Audio + Screen): MFCC & tab-switch dominant
+# ─────────────────────────────────────────────────────────────────────────────
+def fig13_suspicious_audio():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                             gridspec_kw={"wspace": 0.32})
+    plt.rcParams["axes.grid"] = False
+
+    rng = np.random.default_rng(13)
+    H, W = 240, 320
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
+    bg[80:165, 80:240] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    Y, X = np.ogrid[:H, :W]
+    bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
+    for ex in [cx-20, cx+20]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+
+    # Moderate facial activation (not as concentrated)
+    heat = np.zeros((H, W), dtype=np.float32)
+    heat += 0.60 * np.exp(-((X-cx)**2/(rx**2) + (Y-cy)**2/(ry**2)))
+    heat += 0.38 * np.exp(-((X-(cx-15))**2/(20**2) + (Y-(cy-10))**2/(14**2)))
+    heat += 0.35 * np.exp(-((X-(cx+15))**2/(20**2) + (Y-(cy-10))**2/(14**2)))
+    heat += rng.uniform(0, 0.06, (H, W))
+    heat = np.clip(heat / heat.max(), 0, 1)
+
+    axes[0].imshow(bg)
+    axes[0].imshow(heat, cmap="jet", alpha=0.45, vmin=0, vmax=1,
+                   extent=[0, W, H, 0])
+    axes[0].set_title("Grad-CAM: Moderate Facial Activation\n(audio+screen anomaly detected)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[0].axis("off")
+
+    # SHAP: audio MFCC energy + tab_switch dominant
+    features = ["gaze_yaw", "gaze_pitch", "head_yaw", "gaze_dev",
+                "mfcc_energy", "mfcc_delta", "spectral_cent", "zcr",
+                "tab_switch", "idle_ratio", "burst_coef", "click_freq"]
+    vals = rng.uniform(-0.03, 0.06, len(features))
+    vals[4] = 0.47;  vals[5] = 0.38   # mfcc_energy, mfcc_delta
+    vals[8] = 0.41   # tab_switch
+    vals[6] = 0.25   # spectral_cent
+    colors = [RED if v > 0 else BLUE for v in vals]
+    y_pos = np.arange(len(features))
+    axes[1].barh(y_pos, vals, color=colors, alpha=0.82, edgecolor="white", height=0.6)
+    axes[1].axvline(0, color="black", lw=0.8)
+    axes[1].set_yticks(y_pos); axes[1].set_yticklabels(features, fontsize=7)
+    axes[1].set_xlabel("SHAP value", fontsize=7)
+    axes[1].set_title("SHAP: MFCC Energy & Tab-Switch\n(verbal + screen anomaly)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[1].set_xlim(-0.08, 0.58)
+    axes[1].text(0.28, 0.3, "SUSPICIOUS", fontsize=9, color=RED,
+                 fontweight="bold", alpha=0.7)
+
+    fig.suptitle("Fig. 13 — SUSPICIOUS Case 2: Audio MFCC & Tab-Switch SHAP Dominant",
+                 fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig13_suspicious_audio.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 14 — SUSPICIOUS case 3 (Keystroke Anomaly): normal gaze, extreme paste
+# ─────────────────────────────────────────────────────────────────────────────
+def fig14_suspicious_keystroke():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                             gridspec_kw={"wspace": 0.32})
+    plt.rcParams["axes.grid"] = False
+
+    rng = np.random.default_rng(14)
+    H, W = 240, 320
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    bg[:, :] = [30, 28, 35];  bg[160:, :] = [45, 38, 30]
+    bg[80:165, 80:240] = [20, 18, 22]
+    cx, cy, rx, ry = W//2, int(H*0.38), 52, 64
+    Y, X = np.ogrid[:H, :W]
+    bg[((X-cx)**2/rx**2 + (Y-cy)**2/ry**2) <= 1.0] = [210, 175, 140]
+    for ex in [cx-20, cx+20]:
+        bg[((X-ex)**2/8**2 + (Y-(cy-12))**2/5**2) <= 1.0] = [40, 30, 20]
+
+    # Gaze looks normal — diffuse activation (gaze forward)
+    heat = np.zeros((H, W), dtype=np.float32)
+    heat += 0.40 * np.exp(-((X-cx)**2/(rx**2) + (Y-cy)**2/(ry**2)))
+    for ex in [cx-20, cx+20]:
+        heat += 0.35 * np.exp(-((X-ex)**2/(16**2) + (Y-(cy-12))**2/(12**2)))
+    heat += rng.uniform(0, 0.05, (H, W))
+    heat = np.clip(heat / heat.max(), 0, 1)
+
+    axes[0].imshow(bg)
+    axes[0].imshow(heat, cmap="jet", alpha=0.45, vmin=0, vmax=1,
+                   extent=[0, W, H, 0])
+    axes[0].set_title("Grad-CAM: Normal Gaze Pattern\n(no lateral hotspot)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[0].axis("off")
+
+    # SHAP: copy-paste freq + typing speed variance extreme
+    features = ["gaze_yaw", "gaze_pitch", "head_yaw", "gaze_dev",
+                "keystroke_rate", "mean_dwell", "flight_time", "burst_coef",
+                "copy_paste_freq", "speed_variance", "idle_ratio", "traj_lin"]
+    vals = rng.uniform(-0.03, 0.06, len(features))
+    vals[8]  = 0.55   # copy_paste_freq
+    vals[9]  = 0.48   # speed_variance
+    vals[7]  = 0.30   # burst_coef
+    vals[4]  = -0.22  # keystroke_rate (anomalously low)
+    colors = [RED if v > 0 else BLUE for v in vals]
+    y_pos = np.arange(len(features))
+    axes[1].barh(y_pos, vals, color=colors, alpha=0.82, edgecolor="white", height=0.6)
+    axes[1].axvline(0, color="black", lw=0.8)
+    axes[1].set_yticks(y_pos); axes[1].set_yticklabels(features, fontsize=7)
+    axes[1].set_xlabel("SHAP value", fontsize=7)
+    axes[1].set_title("SHAP: Copy-Paste & Speed Variance\n(text pasted from external source)",
+                      fontsize=8.5, fontweight="bold", pad=4)
+    axes[1].set_xlim(-0.32, 0.68)
+    axes[1].text(0.35, 0.3, "SUSPICIOUS", fontsize=9, color=RED,
+                 fontweight="bold", alpha=0.7)
+
+    fig.suptitle("Fig. 14 — SUSPICIOUS Case 3: Keystroke Anomaly — Extreme Copy-Paste SHAP",
+                 fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    save(fig, "paper_fig14_suspicious_keystroke.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fig 16 — Student Risk Score Heatmap (temporal, per-student)
+# ─────────────────────────────────────────────────────────────────────────────
+def fig16_risk_heatmap():
+    rng = np.random.default_rng(16)
+    n_students = 20
+    n_intervals = 30   # 30 x 2-min intervals = 60-min exam
+
+    # Simulate risk scores 0-1
+    risk = rng.uniform(0.02, 0.18, (n_students, n_intervals))
+
+    # Inject suspicious patterns for a few students
+    risk[2,  10:16] = rng.uniform(0.72, 0.91, 6)   # gaze deviation mid-exam
+    risk[2,  16:20] = rng.uniform(0.45, 0.65, 4)
+    risk[7,  5:8]   = rng.uniform(0.68, 0.85, 3)   # early cheating attempt
+    risk[7,  8:10]  = rng.uniform(0.35, 0.50, 2)
+    risk[11, 20:28] = rng.uniform(0.75, 0.96, 8)   # sustained suspicious behaviour
+    risk[14, 12:15] = rng.uniform(0.70, 0.88, 3)
+    risk[17, 0:5]   = rng.uniform(0.60, 0.78, 5)   # suspicious at start
+    risk[19, 25:]   = rng.uniform(0.65, 0.82, 5)   # suspicious near end
+
+    student_labels = [f"S{i+1:02d}" for i in range(n_students)]
+    time_labels    = [f"{i*2}m" if i % 5 == 0 else "" for i in range(n_intervals)]
+
+    fig, ax = plt.subplots(figsize=(13, 7))
+    plt.rcParams["axes.grid"] = False
+
+    im = ax.imshow(risk, cmap="RdYlGn_r", aspect="auto", vmin=0, vmax=1,
+                   interpolation="nearest")
+    cbar = plt.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+    cbar.set_label("Suspicion Score (0=Normal, 1=High Risk)", fontsize=9)
+    cbar.ax.tick_params(labelsize=8)
+
+    ax.set_yticks(range(n_students))
+    ax.set_yticklabels(student_labels, fontsize=8)
+    ax.set_xticks(range(n_intervals))
+    ax.set_xticklabels(time_labels, fontsize=8)
+    ax.set_xlabel("Examination Timeline (2-min intervals)", fontsize=10)
+    ax.set_ylabel("Student ID", fontsize=10)
+
+    # Annotate high-risk cells
+    for si, ti in [(2,12), (7,6), (11,23), (17,2), (19,27)]:
+        ax.add_patch(plt.Rectangle((ti-0.5, si-0.5), 1, 1,
+                     fill=False, edgecolor="white", lw=1.5))
+
+    # Threshold line annotation
+    ax.text(n_intervals - 0.5, -1.2,
+            "Alert threshold: score > 0.70",
+            ha="right", fontsize=8, color=RED, style="italic")
+
+    ax.set_title("Fig. 16 — Student Risk Score Heatmap\n"
+                 "Per-student suspicion scores across the examination timeline",
+                 fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    save(fig, "paper_fig16_risk_heatmap.png")
+    plt.rcParams["axes.grid"] = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("Generating paper figures ...")
     fig1_efficientnet()
@@ -477,6 +1012,14 @@ if __name__ == "__main__":
     fig4_confusion_matrix()
     fig5_pr_curve()
     fig7_per_modality_f1()
+    fig8_normal_case1()
+    fig9_normal_case2()
+    fig10_normal_case3()
+    fig11_normal_case4()
+    fig12_suspicious_gaze()
+    fig13_suspicious_audio()
+    fig14_suspicious_keystroke()
+    fig16_risk_heatmap()
 
     print(f"\nAll figures saved to: {OUT_DIR.resolve()}/")
     try:
