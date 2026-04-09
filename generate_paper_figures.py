@@ -62,139 +62,177 @@ def save(fig, name):
 # ─────────────────────────────────────────────────────────────────────────────
 # Fig 1 — EfficientNet-B3 Architecture + MBConv detail
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ---------------------------------------------------------------------------
+# Fig 1 -- EfficientNet-B3 Architecture + MBConv detail  (clean rewrite)
+# ---------------------------------------------------------------------------
+def _draw_block(ax, cx, y_top, bw, bh, label, color, fontsize=9):
+    rect = FancyBboxPatch(
+        (cx - bw/2, y_top - bh), bw, bh,
+        boxstyle="round,pad=0.04",
+        facecolor=color, edgecolor="white",
+        linewidth=2.0, alpha=0.93, zorder=2, clip_on=False,
+    )
+    ax.add_patch(rect)
+    ax.text(cx, y_top - bh/2, label,
+            ha="center", va="center", fontsize=fontsize,
+            color="white", fontweight="bold", zorder=3, clip_on=False)
+    return y_top - bh
+
+
+def _arr(ax, cx, y_from, y_to, color="#4B5563"):
+    ax.annotate("",
+        xy=(cx, y_to), xytext=(cx, y_from),
+        arrowprops=dict(arrowstyle="-|>", color=color,
+                        lw=1.5, mutation_scale=13),
+        annotation_clip=False, zorder=4)
+
+
 def fig1_efficientnet():
-    fig = plt.figure(figsize=(14, 7))
     plt.rcParams["axes.grid"] = False
 
-    # ── Left panel: main architecture ────────────────────────────────────────
-    ax = fig.add_axes([0.02, 0.05, 0.56, 0.90])
-    ax.axis("off")
-    ax.set_xlim(0, 10); ax.set_ylim(0, 12)
-    ax.set_title("EfficientNet-B3 Architecture", fontsize=12, fontweight="bold", pad=4)
+    fig, (ax_l, ax_r) = plt.subplots(
+        1, 2, figsize=(15, 11),
+        gridspec_kw={"width_ratios": [1, 1], "wspace": 0.14},
+    )
+    for ax in (ax_l, ax_r):
+        ax.axis("off")
 
-    blocks = [
-        ("Input\n224×224×3",           "#374151",  0.5),
-        ("Stem Conv 3×3\nBN + Swish",  BLUE,       0.4),
-        ("MBConv1  k3  ×1\n40 ch",     TEAL,       0.4),
-        ("MBConv6  k3  ×2\n48 ch",     TEAL,       0.5),
-        ("MBConv6  k5  ×3\n80 ch",     TEAL,       0.5),
-        ("MBConv6  k3  ×3\n160 ch",    TEAL,       0.5),
-        ("MBConv6  k5  ×4\n176 ch",    TEAL,       0.5),
-        ("MBConv6  k5  ×5\n304 ch",    TEAL,       0.5),
-        ("MBConv6  k3  ×2\n512 ch",    TEAL,       0.5),
-        ("Head Conv 1×1\n1280 ch + Pool", PURPLE,  0.4),
-        ("FC + Dropout 0.3",           PURPLE,     0.35),
-        ("Output  sigmoid\nCheating Score", RED,   0.4),
+    # ------------------------------------------------------------------
+    # LEFT -- main EfficientNet-B3 pipeline
+    # ------------------------------------------------------------------
+    ax_l.set_xlim(0, 4)
+    ax_l.set_ylim(-0.5, 13.8)
+    ax_l.set_title("EfficientNet-B3 Architecture", fontsize=13,
+                   fontweight="bold", pad=12)
+
+    arch = [
+        ("Input Image  224 x 224 x 3",       "#374151", 0.52),
+        ("Stem Conv 3x3  |  BN  |  Swish",   BLUE,      0.52),
+        ("MBConv1  k=3  x1  |  40 ch",       TEAL,      0.50),
+        ("MBConv6  k=3  x2  |  48 ch",       TEAL,      0.50),
+        ("MBConv6  k=5  x3  |  80 ch",       TEAL,      0.50),
+        ("MBConv6  k=3  x3  |  160 ch",      TEAL,      0.50),
+        ("MBConv6  k=5  x4  |  176 ch",      TEAL,      0.50),
+        ("MBConv6  k=5  x5  |  304 ch",      TEAL,      0.50),
+        ("MBConv6  k=3  x2  |  512 ch",      TEAL,      0.50),
+        ("Head Conv 1x1  |  1280 ch",         PURPLE,    0.52),
+        ("Global Avg Pool  |  Dropout(0.3)",  PURPLE,    0.50),
+        ("FC (1280->1)  |  Sigmoid",          RED,       0.52),
+        ("Cheating Probability Score",        "#1F2937", 0.52),
     ]
 
-    bw = 2.6; gap = 0.12
-    total_h = sum(b[2] + gap for b in blocks)
-    y = 11.2
-    box_centers = []
+    GAP = 0.16
+    cx  = 2.0
+    bw  = 3.4
+    y   = 13.3
+    bots = []
 
-    for label, color, h in blocks:
-        bx = 3.7 - bw/2
-        rect = FancyBboxPatch((bx, y-h), bw, h,
-                               boxstyle="round,pad=0.04",
-                               facecolor=color, edgecolor="white",
-                               alpha=0.88, linewidth=1.5, zorder=2)
-        ax.add_patch(rect)
-        ax.text(bx + bw/2, y - h/2, label,
-                ha="center", va="center", fontsize=7.5,
-                color="white", fontweight="bold", zorder=3)
-        box_centers.append((bx + bw/2, y - h/2, y - h, y))
-        y -= h + gap
+    for label, color, bh in arch:
+        bot = _draw_block(ax_l, cx, y, bw, bh, label, color, fontsize=9)
+        bots.append(bot)
+        y = bot - GAP
 
-    # Arrows
-    for i in range(len(box_centers)-1):
-        _, _, _, top_cur = box_centers[i]
-        _, _, bot_nxt, _ = box_centers[i+1]
-        mid_x = box_centers[i][0]
-        ax.annotate("", xy=(mid_x, bot_nxt + 0.02),
-                    xytext=(mid_x, top_cur - gap + 0.02),
-                    arrowprops=dict(arrowstyle="-|>", color=GRAY,
-                                   lw=1.2, mutation_scale=10), zorder=4)
+    # arrows between blocks
+    for i in range(len(bots) - 1):
+        _arr(ax_l, cx, bots[i], bots[i] - GAP + 0.01)
 
-    # Bracket pointing to MBConv detail
-    ax.annotate("MBConv\ndetail →",
-                xy=(3.7 + bw/2 + 0.05, box_centers[3][1]),
-                xytext=(5.5, box_centers[3][1]),
-                fontsize=8, color=TEAL, fontweight="bold",
-                arrowprops=dict(arrowstyle="-|>", color=TEAL, lw=1.2))
+    # callout annotation
+    mbconv_mid_y = (13.3 - 0.52 - GAP - 0.52 - GAP - 0.50 - GAP
+                    - 0.50/2)
+    ax_l.text(cx + bw/2 + 0.12, mbconv_mid_y,
+              "  see MBConv\n  detail  -->",
+              fontsize=9, color=TEAL, fontweight="bold",
+              ha="left", va="center", clip_on=False)
 
-    # ── Right panel: MBConv block detail ─────────────────────────────────────
-    ax2 = fig.add_axes([0.62, 0.05, 0.36, 0.90])
-    ax2.axis("off")
-    ax2.set_xlim(0, 6); ax2.set_ylim(0, 12)
-    ax2.set_title("MBConv Block Detail", fontsize=12, fontweight="bold", pad=4)
+    leg = [
+        mpatches.Patch(color=BLUE,    label="Stem conv"),
+        mpatches.Patch(color=TEAL,    label="MBConv blocks"),
+        mpatches.Patch(color=PURPLE,  label="Head / pooling"),
+        mpatches.Patch(color=RED,     label="Output sigmoid"),
+    ]
+    ax_l.legend(handles=leg, loc="lower center", fontsize=9,
+                framealpha=0.92, ncol=2, bbox_to_anchor=(0.5, -0.03))
 
-    mbconv = [
-        ("Input  x",                    GRAY,   0.38),
-        ("Expand Conv 1×1\n(×expand_ratio)\nBN + Swish", BLUE, 0.65),
-        ("Depthwise Conv k×k\nBN + Swish",               TEAL, 0.55),
-        ("SE Block\nSqueeze (÷4) + Excite",              ORANGE, 0.55),
-        ("Project Conv 1×1\nBN  (no activation)",        BLUE, 0.55),
-        ("Output  y",                    GRAY,  0.38),
+    # ------------------------------------------------------------------
+    # RIGHT -- MBConv block detail
+    # ------------------------------------------------------------------
+    ax_r.set_xlim(0, 4)
+    ax_r.set_ylim(-0.5, 13.8)
+    ax_r.set_title("MBConv Block -- Internal Detail", fontsize=13,
+                   fontweight="bold", pad=12)
+
+    mb = [
+        ("Input  x",                                   "#374151", 0.52),
+        ("Pointwise Conv 1x1  (Expansion x6)\nBN  |  Swish",
+                                                        BLUE,      0.78),
+        ("Depthwise Conv  k x k  (Spatial)\nBN  |  Swish",
+                                                        TEAL,      0.78),
+        ("Squeeze-and-Excite Block\nGAP -> FC -> Sigmoid (Channel Weights)",
+                                                        ORANGE,    0.78),
+        ("Pointwise Conv 1x1  (Projection)\nBN  (no activation)",
+                                                        BLUE,      0.78),
+        ("Output  y  (when stride=1)\ny = x + F(x)  residual",
+                                                        GREEN,     0.62),
     ]
 
-    bw2 = 2.8; cx2 = 3.0
-    y2 = 11.3
-    mb_centers = []
+    cx2 = 2.0
+    bw2 = 3.4
+    y2  = 13.3
+    tops2 = []
+    bots2 = []
 
-    for label, color, h in mbconv:
-        bx2 = cx2 - bw2/2
-        rect2 = FancyBboxPatch((bx2, y2-h), bw2, h,
-                                boxstyle="round,pad=0.04",
-                                facecolor=color, edgecolor="white",
-                                alpha=0.88, linewidth=1.5, zorder=2)
-        ax2.add_patch(rect2)
-        ax2.text(cx2, y2 - h/2, label,
-                 ha="center", va="center", fontsize=7.8,
-                 color="white", fontweight="bold", zorder=3)
-        mb_centers.append((cx2, y2-h/2, y2-h, y2))
-        y2 -= h + gap
+    for label, color, bh in mb:
+        tops2.append(y2)
+        bot2 = _draw_block(ax_r, cx2, y2, bw2, bh, label, color,
+                           fontsize=9)
+        bots2.append(bot2)
+        y2 = bot2 - GAP
 
-    # Arrows in detail
-    for i in range(len(mb_centers)-1):
-        _, _, _, top_cur = mb_centers[i]
-        _, _, bot_nxt, _ = mb_centers[i+1]
-        ax2.annotate("", xy=(cx2, bot_nxt + 0.02),
-                     xytext=(cx2, top_cur - gap + 0.02),
-                     arrowprops=dict(arrowstyle="-|>", color=GRAY,
-                                    lw=1.2, mutation_scale=10), zorder=4)
+    # arrows between blocks
+    for i in range(len(bots2) - 1):
+        _arr(ax_r, cx2, bots2[i], bots2[i] - GAP + 0.01)
 
-    # Skip connection (only when stride=1 and channels match)
-    x_skip = cx2 + bw2/2 + 0.25
-    _, _, bot_out, _   = mb_centers[-1]
-    _, _, _,    top_in = mb_centers[0]
-    ax2.annotate("", xy=(cx2 - bw2/2, bot_out + 0.19),
-                 xytext=(x_skip, bot_out + 0.19),
-                 arrowprops=dict(arrowstyle="-|>", color=GREEN, lw=1.5), zorder=4)
-    ax2.plot([x_skip, x_skip], [bot_out + 0.19, top_in + 0.03],
-             color=GREEN, lw=1.5, zorder=3)
-    ax2.plot([x_skip, cx2 + bw2/2 + 0.02], [top_in + 0.03, top_in + 0.03],
-             color=GREEN, lw=1.5, zorder=3)
-    ax2.text(x_skip + 0.12, (bot_out + top_in)/2, "Skip\n(stride=1)",
-             fontsize=7, color=GREEN, va="center")
+    # skip connection on the right side
+    sk_x  = cx2 + bw2/2 + 0.42
+    sk_y_top = tops2[0] - 0.04
+    sk_y_bot = bots2[-1] + 0.04
 
-    # Add + symbol at output merge
-    ax2.text(cx2 - bw2/2 - 0.22, bot_out + 0.19, "⊕",
-             fontsize=14, color=GREEN, va="center", ha="center", zorder=5)
+    ax_r.plot([cx2 + bw2/2, sk_x], [sk_y_top, sk_y_top],
+              color=GREEN, lw=2.2, clip_on=False, zorder=3)
+    ax_r.plot([sk_x, sk_x], [sk_y_bot, sk_y_top],
+              color=GREEN, lw=2.2, clip_on=False, zorder=3)
+    _arr(ax_r, sk_x - (sk_x - cx2 - bw2/2)/2,
+         sk_y_bot, sk_y_bot - 0.001)   # dummy -- real arrow below
+    ax_r.annotate("",
+        xy=(cx2 + bw2/2, sk_y_bot),
+        xytext=(sk_x, sk_y_bot),
+        arrowprops=dict(arrowstyle="-|>", color=GREEN,
+                        lw=2.2, mutation_scale=14),
+        annotation_clip=False, zorder=4)
 
-    # Legend
-    patches = [
-        mpatches.Patch(color=BLUE,   label="Conv + BN + Swish"),
-        mpatches.Patch(color=TEAL,   label="Depthwise Conv"),
-        mpatches.Patch(color=ORANGE, label="SE Attention"),
-        mpatches.Patch(color=GREEN,  label="Residual Skip"),
+    ax_r.text(sk_x + 0.12,
+              (sk_y_top + sk_y_bot) / 2,
+              "Residual\nSkip\n(stride=1)",
+              fontsize=9, color=GREEN, fontweight="bold",
+              va="center", ha="left", clip_on=False)
+
+    mb_leg = [
+        mpatches.Patch(color=BLUE,    label="Pointwise (1x1) Conv"),
+        mpatches.Patch(color=TEAL,    label="Depthwise Conv"),
+        mpatches.Patch(color=ORANGE,  label="SE Attention module"),
+        mpatches.Patch(color=GREEN,   label="Residual skip connection"),
     ]
-    ax2.legend(handles=patches, loc="lower center", fontsize=7.5,
-               framealpha=0.9, ncol=2, bbox_to_anchor=(0.5, -0.01))
+    ax_r.legend(handles=mb_leg, loc="lower center", fontsize=9,
+                framealpha=0.92, ncol=2, bbox_to_anchor=(0.5, -0.03))
 
-    fig.suptitle("Fig. 1 — EfficientNet-B3 Architecture for Cheating Detection",
-                 fontsize=12, fontweight="bold", y=0.98)
+    fig.suptitle(
+        "Fig. 1 -- EfficientNet-B3 Architecture Diagram with MBConv Block Detail",
+        fontsize=13, fontweight="bold", y=1.00)
+    fig.tight_layout(rect=[0, 0, 1, 0.985])
     save(fig, "paper_fig1_efficientnet_architecture.png")
     plt.rcParams["axes.grid"] = True
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
