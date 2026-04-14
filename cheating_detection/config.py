@@ -1,13 +1,13 @@
 """
-config.py — Central configuration for all hyperparameters and constants.
+config.py -- Central configuration for all hyperparameters and constants.
 """
 
 import os
 
-# ── Reproducibility ──────────────────────────────────────────────────────────
+# -- Reproducibility --------------------------------------------------------
 RANDOM_SEED = 42
 
-# ── Dataset ───────────────────────────────────────────────────────────────────
+# -- Dataset ----------------------------------------------------------------
 N_SESSIONS = 240
 
 # Class distribution
@@ -30,7 +30,7 @@ CLASS_NAMES = [
 WINDOWS_PER_SESSION_MIN = 15
 WINDOWS_PER_SESSION_MAX = 30
 
-# ── Features ──────────────────────────────────────────────────────────────────
+# -- Features ---------------------------------------------------------------
 N_VISUAL_FEATURES = 8
 N_BEHAVIORAL_FEATURES = 8
 N_TOTAL_FEATURES = N_VISUAL_FEATURES + N_BEHAVIORAL_FEATURES
@@ -59,38 +59,44 @@ BEHAVIORAL_FEATURE_NAMES = [
 
 ALL_FEATURE_NAMES = VISUAL_FEATURE_NAMES + BEHAVIORAL_FEATURE_NAMES
 
-# ── Train / Val / Test Split ───────────────────────────────────────────────────
+# -- Train / Val / Test Split -----------------------------------------------
 TRAIN_RATIO = 0.70
 VAL_RATIO = 0.15
 TEST_RATIO = 0.15
 
-# ── SVM ───────────────────────────────────────────────────────────────────────
+# -- SVM --------------------------------------------------------------------
 SVM_PARAM_GRID = {
     "C": [0.1, 1, 10],
     "gamma": ["scale", "auto"],
 }
 
-# ── Random Forest ─────────────────────────────────────────────────────────────
-RF_N_ESTIMATORS = 100
+# -- Random Forest -----------------------------------------------------------
+RF_N_ESTIMATORS = 300
 
-# ── MLP (PyTorch) ─────────────────────────────────────────────────────────────
-MLP_HIDDEN_LAYERS = [128, 64]
+# -- MLP (PyTorch) -----------------------------------------------------------
+MLP_HIDDEN_LAYERS = [256, 128, 64]
 MLP_DROPOUT = 0.3
 MLP_LR = 0.001
-MLP_BATCH_SIZE = 32
-MLP_MAX_EPOCHS = 80
-MLP_PATIENCE = 10
+MLP_BATCH_SIZE = 64
+MLP_MAX_EPOCHS = 150
+MLP_PATIENCE = 20
+MLP_USE_BATCH_NORM = True
+MLP_USE_CLASS_WEIGHTS = True
+MLP_LR_SCHEDULER = True
 
-# ── Cross-Validation ──────────────────────────────────────────────────────────
+# -- Cross-Validation -------------------------------------------------------
 CV_FOLDS = 5
 
-# ── Thresholding ──────────────────────────────────────────────────────────────
-CHEATING_THRESHOLD = 0.70
-THRESHOLD_RANGE_START = 0.50
+# -- Thresholding ------------------------------------------------------------
+CHEATING_THRESHOLD = 0.45
+THRESHOLD_RANGE_START = 0.30
 THRESHOLD_RANGE_END = 0.95
 THRESHOLD_STEP = 0.05
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# -- SMOTE -------------------------------------------------------------------
+USE_SMOTE = True
+
+# -- Paths -------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 MODELS_DIR = os.path.join(BASE_DIR, "models")
@@ -102,6 +108,7 @@ SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
 SVM_MODEL_PATH = os.path.join(MODELS_DIR, "svm_model.joblib")
 RF_MODEL_PATH = os.path.join(MODELS_DIR, "rf_model.joblib")
 MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.pth")
+ENSEMBLE_MODEL_PATH = os.path.join(MODELS_DIR, "ensemble_model.joblib")
 RESULTS_JSON = os.path.join(OUTPUTS_DIR, "results.json")
 
 CONFUSION_MATRIX_PNG = os.path.join(OUTPUTS_DIR, "confusion_matrix.png")

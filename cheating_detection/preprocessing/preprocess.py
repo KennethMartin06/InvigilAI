@@ -1,5 +1,5 @@
 """
-preprocess.py — Data cleaning, normalisation, and train/val/test splitting.
+preprocess.py -- Data cleaning, normalisation, SMOTE oversampling, and splitting.
 
 All preprocessing decisions (scaler fitting, imputation) are derived from
 the training set only and then applied to val and test to prevent data leakage.
@@ -20,24 +20,12 @@ from cheating_detection.config import (
     VAL_RATIO,
     SCALER_PATH,
     MODELS_DIR,
+    USE_SMOTE,
 )
 
 
 def replace_invalid_values(X: np.ndarray) -> np.ndarray:
-    """
-    Replace NaN and infinite values with the per-column median.
-
-    Computes medians ignoring NaN/Inf so that even heavily corrupted columns
-    can be salvaged.
-
-    Parameters
-    ----------
-    X : np.ndarray, shape (n_samples, n_features)
-
-    Returns
-    -------
-    np.ndarray — cleaned array of the same shape.
-    """
+    """Replace NaN and infinite values with the per-column median."""
     X = X.copy().astype(np.float64)
     for col in range(X.shape[1]):
         col_data = X[:, col]
@@ -53,22 +41,8 @@ def replace_invalid_values(X: np.ndarray) -> np.ndarray:
 def split_dataset(
     X: np.ndarray,
     y: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Stratified train / validation / test split.
-
-    Ratios are taken from config (70 / 15 / 15).  Stratification preserves
-    class proportions in every split.
-
-    Parameters
-    ----------
-    X : np.ndarray, shape (n_samples, n_features)
-    y : np.ndarray, shape (n_samples,)
-
-    Returns
-    -------
-    X_train, X_val, X_test, y_train, y_val, y_test
-    """
+) -> tuple:
+    """Stratified train / validation / test split (70 / 15 / 15)."""
     test_size = VAL_RATIO + (1 - TRAIN_RATIO - VAL_RATIO)   # = 0.30
     val_relative = VAL_RATIO / test_size                      # 0.15 / 0.30 = 0.50
 
@@ -80,55 +54,65 @@ def split_dataset(
     )
     X_val, X_test, y_val, y_test = train_test_split(
         X_temp, y_temp,
-        test_size=(1 - val_relative),   # 0.50 → equal val / test
+        test_size=(1 - val_relative),   # 0.50 -> equal val / test
         stratify=y_temp,
         random_state=RANDOM_SEED,
     )
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
+def apply_smote(X_train: np.ndarray, y_train: np.ndarray, verbose: bool = True) -> tuple:
+    """Apply SMOTE to oversample minority classes in training data only."""
+    try:
+        from imblearn.over_sampling import SMOTE
+    except ImportError:
+        if verbose:
+            print("[SMOTE] imbalanced-learn not installed -- pip install imbalanced-learn")
+            print("[SMOTE] Skipping SMOTE, using original training data.")
+        return X_train, y_train
+
+    unique, counts = np.unique(y_train, return_counts=True)
+    if verbose:
+        print("[SMOTE] Before oversampling:")
+        for cls, cnt in zip(unique, counts):
+            print(f"  Class {cls}: {cnt}")
+
+    # Set k_neighbors based on smallest class (must be < count)
+    min_count = counts.min()
+    k = min(5, min_count - 1)
+    if k < 1:
+        if verbose:
+            print("[SMOTE] Smallest class too small for SMOTE, skipping.")
+        return X_train, y_train
+
+    smote = SMOTE(random_state=RANDOM_SEED, k_neighbors=k)
+    X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
+
+    if verbose:
+        unique2, counts2 = np.unique(y_resampled, return_counts=True)
+        print("[SMOTE] After oversampling:")
+        for cls, cnt in zip(unique2, counts2):
+            print(f"  Class {cls}: {cnt}")
+        print(f"[SMOTE] {len(X_train)} -> {len(X_resampled)} samples")
+
+    return X_resampled, y_resampled
+
+
 def fit_scaler(X_train: np.ndarray) -> StandardScaler:
-    """
-    Fit a StandardScaler on the training features.
-
-    Parameters
-    ----------
-    X_train : np.ndarray, shape (n_train, n_features)
-
-    Returns
-    -------
-    sklearn.preprocessing.StandardScaler — fitted scaler.
-    """
+    """Fit a StandardScaler on the training features."""
     scaler = StandardScaler()
     scaler.fit(X_train)
     return scaler
 
 
 def save_scaler(scaler: StandardScaler, path: str = SCALER_PATH) -> None:
-    """
-    Persist the fitted scaler to disk.
-
-    Parameters
-    ----------
-    scaler : StandardScaler
-    path : str — destination file path (.joblib).
-    """
+    """Persist the fitted scaler to disk."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     joblib.dump(scaler, path)
 
 
 def load_scaler(path: str = SCALER_PATH) -> StandardScaler:
-    """
-    Load a previously saved StandardScaler.
-
-    Parameters
-    ----------
-    path : str
-
-    Returns
-    -------
-    StandardScaler
-    """
+    """Load a previously saved StandardScaler."""
     return joblib.load(path)
 
 
@@ -138,23 +122,9 @@ def preprocess(
     verbose: bool = True,
 ) -> dict:
     """
-    Full preprocessing pipeline: clean → split → normalise → save scaler.
+    Full preprocessing pipeline: clean -> split -> SMOTE -> normalise -> save scaler.
 
-    Parameters
-    ----------
-    X : np.ndarray, shape (n_samples, n_features)
-        Raw feature matrix from the data generator.
-    y : np.ndarray, shape (n_samples,)
-        Integer class labels.
-    verbose : bool
-        Print split statistics when True.
-
-    Returns
-    -------
-    dict with keys:
-        "X_train", "X_val", "X_test",
-        "y_train", "y_val", "y_test",
-        "scaler"
+    SMOTE is applied AFTER splitting but BEFORE scaling, on training data only.
     """
     # 1. Clean
     X = replace_invalid_values(X)
@@ -162,23 +132,30 @@ def preprocess(
     # 2. Split (stratified)
     X_train, X_val, X_test, y_train, y_val, y_test = split_dataset(X, y)
 
-    # 3. Fit scaler on train only
+    if verbose:
+        print(f"[Preprocess] Train : {X_train.shape[0]} windows")
+        print(f"[Preprocess] Val   : {X_val.shape[0]} windows")
+        print(f"[Preprocess] Test  : {X_test.shape[0]} windows")
+
+    # 3. SMOTE oversampling (training data only)
+    if USE_SMOTE:
+        X_train, y_train = apply_smote(X_train, y_train, verbose=verbose)
+
+    # 4. Fit scaler on train only (after SMOTE so synthetic samples are also normalized)
     scaler = fit_scaler(X_train)
 
-    # 4. Transform all splits
+    # 5. Transform all splits
     X_train_s = scaler.transform(X_train)
     X_val_s = scaler.transform(X_val)
     X_test_s = scaler.transform(X_test)
 
-    # 5. Save scaler
+    # 6. Save scaler
     os.makedirs(MODELS_DIR, exist_ok=True)
     save_scaler(scaler)
 
     if verbose:
-        print(f"[Preprocess] Train : {X_train_s.shape[0]} windows")
-        print(f"[Preprocess] Val   : {X_val_s.shape[0]} windows")
-        print(f"[Preprocess] Test  : {X_test_s.shape[0]} windows")
-        print(f"[Preprocess] Scaler saved → {SCALER_PATH}")
+        print(f"[Preprocess] Final train size (after SMOTE): {X_train_s.shape[0]}")
+        print(f"[Preprocess] Scaler saved -> {SCALER_PATH}")
 
     return {
         "X_train": X_train_s,

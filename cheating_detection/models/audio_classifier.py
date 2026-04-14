@@ -1,13 +1,10 @@
 """
-audio_classifier.py — Train an audio classifier on ESC-50 dataset.
+audio_classifier.py -- Improved audio classifier on ESC-50 + LibriSpeech.
 
-Maps ESC-50 categories to exam-relevant labels:
-  0 = normal_sound     (keyboard typing, clock tick, silence)
-  1 = suspicious_sound (breathing, coughing, laughing, speaking)
-  2 = alert_sound      (door knock, footsteps, clapping)
-
-Extracts MFCC + spectral features from .wav files and trains
-an MLP classifier. Saves model to models/audio_classifier.joblib.
+Improvements:
+  - Deeper MLP (256, 128, 64) with balanced class weights
+  - Data augmentation via noise injection and time-stretching
+  - More ESC-50 categories mapped for better coverage
 """
 
 import os
@@ -31,7 +28,7 @@ MODEL_OUT  = BASE_DIR / "cheating_detection" / "models" / "audio_classifier.jobl
 SCALER_OUT = BASE_DIR / "cheating_detection" / "models" / "audio_scaler.joblib"
 FEATURES_CACHE = BASE_DIR / "cheating_detection" / "data" / "audio_features.npz"
 
-# ESC-50 target IDs → exam relevance label
+# ESC-50 target IDs -> exam relevance label
 # 0 = normal, 1 = suspicious, 2 = alert
 LABEL_MAP = {
     # Normal sounds
@@ -39,16 +36,22 @@ LABEL_MAP = {
     12: 0,   # clock_tick
     30: 0,   # vacuum_cleaner (background noise)
     28: 0,   # washing_machine
+    38: 0,   # mouse_click
+    48: 0,   # train (ambient)
+    47: 0,   # airplane (ambient)
     # Suspicious sounds (whispering / speech-like)
      1: 1,   # breathing
      2: 1,   # coughing
     20: 1,   # laughing
     13: 1,   # sneezing
+    26: 1,   # can_opening (fumbling)
+    23: 1,   # drinking_sipping
     # Alert sounds (movement/activity)
      8: 2,   # clapping
     31: 2,   # door_wood_knock
     10: 2,   # footsteps
     11: 2,   # door_wood_creaks
+    36: 2,   # glass_breaking
 }
 
 
@@ -77,14 +80,56 @@ def extract_features(wav_path: Path) -> np.ndarray:
     return features.astype(np.float32)
 
 
-def load_or_extract_features(meta: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Load cached features or extract from audio files."""
-    if FEATURES_CACHE.exists():
-        print("  Loading cached audio features...")
-        data = np.load(FEATURES_CACHE)
-        return data["X"], data["y"]
+def augment_audio(y: np.ndarray, sr: int) -> list:
+    """Generate augmented versions of an audio signal."""
+    augmented = []
+    # Add Gaussian noise
+    noise = np.random.randn(len(y)) * 0.005
+    augmented.append(y + noise)
+    # Time stretch (slightly faster)
+    augmented.append(librosa.effects.time_stretch(y, rate=1.1))
+    # Time stretch (slightly slower)
+    augmented.append(librosa.effects.time_stretch(y, rate=0.9))
+    return augmented
 
-    print("  Extracting features from audio files...")
+
+def extract_features_from_signal(y: np.ndarray, sr: int = 22050) -> np.ndarray:
+    """Extract features from raw audio signal (for augmented data)."""
+    mfcc          = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfcc_delta    = librosa.feature.delta(mfcc)
+    spectral_cent = librosa.feature.spectral_centroid(y=y, sr=sr)
+    spectral_bw   = librosa.feature.spectral_bandwidth(y=y, sr=sr)
+    zcr           = librosa.feature.zero_crossing_rate(y)
+    rms           = librosa.feature.rms(y=y)
+    chroma        = librosa.feature.chroma_stft(y=y, sr=sr)
+
+    features = np.concatenate([
+        mfcc.mean(axis=1),
+        mfcc.std(axis=1),
+        mfcc_delta.mean(axis=1),
+        spectral_cent.mean(axis=1),
+        spectral_bw.mean(axis=1),
+        zcr.mean(axis=1),
+        rms.mean(axis=1),
+        chroma.mean(axis=1),
+    ])
+    return features.astype(np.float32)
+
+
+def load_or_extract_features(meta: pd.DataFrame, use_augmentation: bool = True) -> tuple:
+    """Load cached features or extract from audio files with optional augmentation."""
+    # Delete old cache to force re-extraction with new categories
+    if FEATURES_CACHE.exists():
+        data = np.load(FEATURES_CACHE)
+        old_X, old_y = data["X"], data["y"]
+        # Re-extract if category count changed
+        if len(old_X) < 500:
+            os.remove(FEATURES_CACHE)
+        else:
+            print("  Loading cached audio features...")
+            return old_X, old_y
+
+    print("  Extracting features from audio files (with augmentation)...")
     X_list, y_list = [], []
     skipped = 0
 
@@ -99,13 +144,22 @@ def load_or_extract_features(meta: pd.DataFrame) -> tuple[np.ndarray, np.ndarray
             continue
 
         try:
+            # Original features
             feats = extract_features(wav_path)
             X_list.append(feats)
             y_list.append(LABEL_MAP[target])
-        except Exception as e:
+
+            # Augmented features
+            if use_augmentation:
+                y_audio, sr = librosa.load(str(wav_path), sr=22050, duration=5.0)
+                for aug_signal in augment_audio(y_audio, sr):
+                    aug_feats = extract_features_from_signal(aug_signal, sr)
+                    X_list.append(aug_feats)
+                    y_list.append(LABEL_MAP[target])
+        except Exception:
             skipped += 1
 
-    print(f"  Extracted: {len(X_list)} samples, skipped: {skipped}")
+    print(f"  Extracted: {len(X_list)} samples (incl. augmented), skipped: {skipped}")
 
     X = np.array(X_list, dtype=np.float32)
     y = np.array(y_list, dtype=np.int64)
@@ -116,13 +170,13 @@ def load_or_extract_features(meta: pd.DataFrame) -> tuple[np.ndarray, np.ndarray
 
 
 def train_audio_classifier():
-    print("\n=== Audio Classifier Training (ESC-50) ===")
+    print("\n=== Audio Classifier Training (ESC-50, improved) ===")
 
     meta = pd.read_csv(ESC50_META)
     print(f"  Total ESC-50 files: {len(meta)}")
     print(f"  Using categories: {list(LABEL_MAP.keys())}")
 
-    X, y = load_or_extract_features(meta)
+    X, y = load_or_extract_features(meta, use_augmentation=True)
 
     label_counts = dict(zip(*np.unique(y, return_counts=True)))
     print(f"  Label distribution: {label_counts}")
@@ -139,16 +193,19 @@ def train_audio_classifier():
     X_test_sc  = scaler.transform(X_test)
 
     model = MLPClassifier(
-        hidden_layer_sizes=(128, 64),
+        hidden_layer_sizes=(256, 128, 64),
         activation="relu",
-        max_iter=200,
+        max_iter=500,
         random_state=42,
         early_stopping=True,
-        validation_fraction=0.1,
+        validation_fraction=0.15,
+        learning_rate="adaptive",
+        learning_rate_init=0.001,
+        batch_size=32,
         verbose=False,
     )
 
-    print("  Training MLP on audio features...")
+    print("  Training improved MLP on audio features...")
     model.fit(X_train_sc, y_train)
 
     y_pred = model.predict(X_test_sc)
@@ -161,17 +218,14 @@ def train_audio_classifier():
 
     joblib.dump(model,  MODEL_OUT)
     joblib.dump(scaler, SCALER_OUT)
-    print(f"  Saved model  → {MODEL_OUT}")
-    print(f"  Saved scaler → {SCALER_OUT}")
+    print(f"  Saved model  -> {MODEL_OUT}")
+    print(f"  Saved scaler -> {SCALER_OUT}")
 
     return model, scaler
 
 
 def predict_audio(wav_path: str) -> dict:
-    """
-    Predict exam-relevance label for a .wav file.
-    Returns dict with label, probability, and class name.
-    """
+    """Predict exam-relevance label for a .wav file."""
     model  = joblib.load(MODEL_OUT)
     scaler = joblib.load(SCALER_OUT)
 

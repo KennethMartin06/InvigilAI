@@ -53,7 +53,7 @@ from cheating_detection.models.model_utils import (
     save_results,
     print_summary_table,
 )
-from cheating_detection.models.train import train_mlp, MLP
+from cheating_detection.models.train import train_mlp, MLP, EnsembleModel
 
 
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
@@ -74,6 +74,8 @@ def _get_proba(model, X: np.ndarray) -> np.ndarray:
     -------
     np.ndarray, shape (n_samples, n_classes)
     """
+    if isinstance(model, EnsembleModel):
+        return model.predict_proba(X)
     if isinstance(model, MLP):
         x_t = torch.tensor(X, dtype=torch.float32).to(next(model.parameters()).device)
         return model.predict_proba(x_t)
@@ -93,6 +95,8 @@ def _get_preds(model, X: np.ndarray) -> np.ndarray:
     -------
     np.ndarray, shape (n_samples,)
     """
+    if isinstance(model, EnsembleModel):
+        return model.predict(X)
     if isinstance(model, MLP):
         proba = _get_proba(model, X)
         return np.argmax(proba, axis=1)
