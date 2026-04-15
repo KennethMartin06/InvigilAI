@@ -1,8 +1,8 @@
 """
 config.py -- Central configuration for all hyperparameters and constants.
 
-v3: Added derived features (20 total), Focal Loss, LightGBM, Cosine Annealing,
-    MixUp, SHAP, calibration settings.
+v4: Added 6 new derived features (26 total), Borderline-SMOTE, gradient clipping,
+    SWA, MC Dropout, XGBoost, Optuna tuning, ONNX export settings.
 """
 
 import os
@@ -34,9 +34,9 @@ WINDOWS_PER_SESSION_MAX = 30
 # -- Features ---------------------------------------------------------------
 N_VISUAL_FEATURES = 8
 N_BEHAVIORAL_FEATURES = 8
-N_DERIVED_FEATURES = 4
+N_DERIVED_FEATURES = 10   # 4 original + 6 new
 N_BASE_FEATURES = N_VISUAL_FEATURES + N_BEHAVIORAL_FEATURES      # 16
-N_TOTAL_FEATURES = N_BASE_FEATURES + N_DERIVED_FEATURES            # 20
+N_TOTAL_FEATURES = N_BASE_FEATURES + N_DERIVED_FEATURES            # 26
 
 VISUAL_FEATURE_NAMES = [
     "gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
@@ -49,10 +49,18 @@ BEHAVIORAL_FEATURE_NAMES = [
 ]
 
 DERIVED_FEATURE_NAMES = [
+    # Original 4
     "gaze_speed",                # sqrt(yaw^2 + pitch^2)
     "head_movement_magnitude",   # sqrt(head_yaw^2 + head_pitch^2 + head_roll^2)
     "keystroke_irregularity",    # burst_coefficient * keystroke_rate
     "activity_imbalance",        # cursor_velocity / (keystroke_rate + eps)
+    # New 6
+    "typing_rhythm",             # mean_dwell_time / (mean_flight_time + eps)
+    "interaction_intensity",     # keystroke_rate * click_frequency
+    "gaze_head_coupling",        # gaze_speed * head_movement_magnitude
+    "suspicious_idle_pattern",   # idle_ratio * burst_coefficient
+    "trajectory_deviation",      # (1 - trajectory_linearity) * cursor_velocity
+    "engagement_score",          # (1 - idle_ratio) * keystroke_rate
 ]
 
 ALL_FEATURE_NAMES = VISUAL_FEATURE_NAMES + BEHAVIORAL_FEATURE_NAMES + DERIVED_FEATURE_NAMES
@@ -76,6 +84,11 @@ LGB_N_ESTIMATORS = 300
 LGB_LEARNING_RATE = 0.05
 LGB_MAX_DEPTH = 7
 LGB_NUM_LEAVES = 63
+
+# -- XGBoost -----------------------------------------------------------------
+XGB_N_ESTIMATORS = 300
+XGB_LEARNING_RATE = 0.05
+XGB_MAX_DEPTH = 6
 
 # -- MLP (PyTorch) -----------------------------------------------------------
 MLP_HIDDEN_LAYERS = [256, 128, 64]
@@ -103,6 +116,19 @@ USE_COSINE_ANNEALING = True
 COSINE_T_0 = 20       # restart every 20 epochs
 COSINE_T_MULT = 2     # double the period after each restart
 
+# -- Gradient Clipping -------------------------------------------------------
+USE_GRADIENT_CLIPPING = True
+GRADIENT_CLIP_NORM = 1.0
+
+# -- Stochastic Weight Averaging (SWA) --------------------------------------
+USE_SWA = True
+SWA_START_EPOCH = 100   # start averaging after this epoch
+SWA_LR = 0.0005         # fixed LR for SWA phase
+
+# -- MC Dropout (uncertainty estimation) -------------------------------------
+USE_MC_DROPOUT = True
+MC_DROPOUT_SAMPLES = 30
+
 # -- Cross-Validation -------------------------------------------------------
 CV_FOLDS = 5
 
@@ -114,14 +140,23 @@ THRESHOLD_STEP = 0.05
 
 # -- SMOTE -------------------------------------------------------------------
 USE_SMOTE = True
+USE_BORDERLINE_SMOTE = True   # use Borderline-SMOTE instead of basic SMOTE
 
 # -- Preprocessing -----------------------------------------------------------
 USE_KNN_IMPUTATION = True
 KNN_IMPUTE_NEIGHBORS = 5
 USE_ROBUST_SCALER = True
 
+# -- Feature Selection -------------------------------------------------------
+USE_FEATURE_SELECTION = False   # mutual-information based feature selection
+FEATURE_SELECTION_K = 22        # top K features to keep
+
 # -- SHAP --------------------------------------------------------------------
 USE_SHAP = True
+
+# -- Optuna ------------------------------------------------------------------
+OPTUNA_N_TRIALS = 50
+OPTUNA_TIMEOUT = 600   # seconds
 
 # -- Paths -------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -135,8 +170,10 @@ SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
 SVM_MODEL_PATH = os.path.join(MODELS_DIR, "svm_model.joblib")
 RF_MODEL_PATH = os.path.join(MODELS_DIR, "rf_model.joblib")
 LGB_MODEL_PATH = os.path.join(MODELS_DIR, "lgb_model.joblib")
+XGB_MODEL_PATH = os.path.join(MODELS_DIR, "xgb_model.joblib")
 MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.pth")
 ENSEMBLE_MODEL_PATH = os.path.join(MODELS_DIR, "ensemble_model.joblib")
+ONNX_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.onnx")
 RESULTS_JSON = os.path.join(OUTPUTS_DIR, "results.json")
 
 CONFUSION_MATRIX_PNG = os.path.join(OUTPUTS_DIR, "confusion_matrix.png")
@@ -147,3 +184,5 @@ ROC_PNG = os.path.join(OUTPUTS_DIR, "roc_curve.png")
 PR_CURVE_PNG = os.path.join(OUTPUTS_DIR, "precision_recall_curve.png")
 SHAP_PNG = os.path.join(OUTPUTS_DIR, "shap_feature_importance.png")
 CALIBRATION_PNG = os.path.join(OUTPUTS_DIR, "calibration_curve.png")
+UNCERTAINTY_PNG = os.path.join(OUTPUTS_DIR, "uncertainty_analysis.png")
+FEATURE_IMPORTANCE_PNG = os.path.join(OUTPUTS_DIR, "feature_importance_comparison.png")

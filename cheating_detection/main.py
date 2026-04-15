@@ -1,8 +1,9 @@
 """
 main.py -- End-to-end pipeline for Multi-Modal AI Cheating Detection System.
 
-v3: Focal Loss, LightGBM, MixUp, Cosine Annealing, Stacking Ensemble,
-    derived features (20-dim), SHAP analysis, calibration curves.
+v4: Borderline-SMOTE, 26-dim features (10 derived), XGBoost, Gradient Clipping,
+    SWA, MC Dropout uncertainty, Optuna tuning, ONNX export, feature importance
+    comparison.
 """
 
 import os
@@ -22,7 +23,8 @@ from cheating_detection.data.hmdb51_pipeline import run_hmdb51_pipeline, merge_w
 from cheating_detection.data.custom_video_pipeline import process_video, merge_and_save as merge_custom_video
 from cheating_detection.preprocessing.preprocess import preprocess
 from cheating_detection.models.train import (
-    train_random_forest, train_lightgbm, train_mlp, train_ensemble, plot_training_curves,
+    train_random_forest, train_lightgbm, train_xgboost,
+    train_mlp, train_ensemble, plot_training_curves,
 )
 from cheating_detection.models.audio_classifier import train_audio_classifier
 from cheating_detection.models.evaluate import run_full_evaluation
@@ -128,15 +130,29 @@ def main():
     except Exception as e:
         print(f"  Skipping custom video ({e})")
 
-    # -- Step 2: Preprocess (KNN impute, derived feats, SMOTE, RobustScaler)
-    banner("STEP 2 -- Preprocessing (KNN impute -> derived features -> SMOTE -> RobustScaler)")
+    # -- Step 2: Preprocess -------------------------------------------------
+    banner("STEP 2 -- Preprocessing (KNN -> 10 derived features -> Borderline-SMOTE -> RobustScaler)")
     t0 = time.time()
     splits = preprocess(X, y, verbose=True)
     X_train, X_val, X_test = splits["X_train"], splits["X_val"], splits["X_test"]
     y_train, y_val, y_test = splits["y_train"], splits["y_val"], splits["y_test"]
     print(f"  Done in {time.time() - t0:.1f}s")
 
-    # -- Step 3a: Random Forest (balanced, 300 trees) -----------------------
+    # -- Step 2b: Optuna Hyperparameter Tuning (optional) -------------------
+    banner("STEP 2b -- Optuna Hyperparameter Tuning")
+    t0 = time.time()
+    try:
+        from cheating_detection.models.tune import run_tuning
+        tuning_results = run_tuning(X_train, y_train, verbose=True)
+        print(f"  Done in {time.time() - t0:.1f}s")
+    except ImportError:
+        print("  optuna not installed, using default hyperparameters.")
+        tuning_results = {}
+    except Exception as e:
+        print(f"  Tuning skipped ({e})")
+        tuning_results = {}
+
+    # -- Step 3a: Random Forest ---------------------------------------------
     banner("STEP 3a -- Train Random Forest (300 trees, balanced)")
     t0 = time.time()
     rf_model = train_random_forest(X_train, y_train, verbose=True)
@@ -148,24 +164,32 @@ def main():
     lgb_model = train_lightgbm(X_train, y_train, verbose=True)
     print(f"  Done in {time.time() - t0:.1f}s")
 
-    # -- Step 3c: MLP (Focal Loss + MixUp + Cosine Annealing) ---------------
-    banner("STEP 3c -- Train MLP (Focal Loss, MixUp, CosineAnnealing, BatchNorm)")
+    # -- Step 3c: XGBoost ---------------------------------------------------
+    banner("STEP 3c -- Train XGBoost (300 trees)")
+    t0 = time.time()
+    xgb_model = train_xgboost(X_train, y_train, verbose=True)
+    print(f"  Done in {time.time() - t0:.1f}s")
+
+    # -- Step 3d: MLP (Focal Loss + MixUp + CosineAnnealing + GradClip + SWA)
+    banner("STEP 3d -- Train MLP (Focal+MixUp+CosAnnealing+GradClip+SWA+MCDropout)")
     t0 = time.time()
     mlp_model, history = train_mlp(X_train, y_train, X_val, y_val, verbose=True)
     plot_training_curves(history)
     print(f"  Done in {time.time() - t0:.1f}s")
 
-    # -- Step 3d: Stacking Ensemble -----------------------------------------
-    banner("STEP 3d -- Train Stacking Ensemble (RF + LGB + MLP)")
+    # -- Step 3e: Stacking Ensemble -----------------------------------------
+    banner("STEP 3e -- Train Stacking Ensemble (RF + LGB + XGB + MLP)")
     t0 = time.time()
     base_models = [("Random Forest", rf_model), ("MLP", mlp_model)]
     if lgb_model is not None:
         base_models.insert(1, ("LightGBM", lgb_model))
+    if xgb_model is not None:
+        base_models.insert(-1, ("XGBoost", xgb_model))
     ensemble_model = train_ensemble(base_models, X_train, y_train, X_val, y_val, verbose=True)
     print(f"  Done in {time.time() - t0:.1f}s")
 
-    # -- Step 3e: Audio Classifier ------------------------------------------
-    banner("STEP 3e -- Train Audio Classifier (ESC-50 + LibriSpeech)")
+    # -- Step 3f: Audio Classifier ------------------------------------------
+    banner("STEP 3f -- Train Audio Classifier (ESC-50 + LibriSpeech)")
     t0 = time.time()
     try:
         if HAS_LIBRISPEECH:
@@ -180,30 +204,55 @@ def main():
         except Exception as e2:
             print(f"  Audio classifier unavailable ({e2})")
 
-    # -- Steps 4-6: Full evaluation (SHAP, calibration, ablation) -----------
-    banner("STEPS 4-6 -- Evaluation, Ablation, SHAP, Calibration")
+    # -- Steps 4-6: Full evaluation -----------------------------------------
+    banner("STEPS 4-6 -- Evaluation, Ablation, SHAP, Calibration, Uncertainty")
     models = {"Random Forest": rf_model, "MLP": mlp_model, "Ensemble": ensemble_model}
     if lgb_model is not None:
         models["LightGBM"] = lgb_model
+    if xgb_model is not None:
+        models["XGBoost"] = xgb_model
     run_full_evaluation(models, splits, best_model_name="Ensemble", verbose=True)
+
+    # -- Step 7: ONNX Export ------------------------------------------------
+    banner("STEP 7 -- ONNX Model Export")
+    t0 = time.time()
+    try:
+        from cheating_detection.models.export import export_mlp_to_onnx, verify_onnx_model
+        onnx_path = export_mlp_to_onnx(mlp_model, verbose=True)
+        if onnx_path:
+            verify_onnx_model(onnx_path, verbose=True)
+        print(f"  Done in {time.time() - t0:.1f}s")
+    except ImportError:
+        print("  onnx not installed, skipping export.")
+    except Exception as e:
+        print(f"  ONNX export skipped ({e})")
 
     # -- Summary ------------------------------------------------------------
     banner("PIPELINE COMPLETE")
     elapsed = time.time() - t0_total
     print(f"  Total elapsed: {elapsed:.1f}s ({elapsed/60:.1f} min)")
-    print(f"  Improvements applied:")
+    print(f"  Improvements applied (v4):")
     print(f"    + KNN imputation (k=5) + RobustScaler")
-    print(f"    + 4 derived features (gaze_speed, head_mag, ks_irreg, act_imbal)")
-    print(f"    + SMOTE oversampling for class imbalance")
+    print(f"    + 10 derived features (gaze_speed, head_mag, ks_irreg, act_imbal,")
+    print(f"      typing_rhythm, interaction_intensity, gaze_head_coupling,")
+    print(f"      suspicious_idle, trajectory_dev, engagement_score)")
+    print(f"    + Borderline-SMOTE oversampling for class imbalance")
     print(f"    + RF: 300 trees, balanced class weights")
     print(f"    + LightGBM: 300 trees, balanced, depth=7")
-    print(f"    + MLP: [256,128,64] + BatchNorm + Focal Loss (gamma=2)")
+    print(f"    + XGBoost: 300 trees, depth=6")
+    print(f"    + MLP: [256,128,64] + BatchNorm + Kaiming init")
+    print(f"    + Focal Loss (gamma=2.0) + Label smoothing (eps=0.1)")
     print(f"    + MixUp augmentation (alpha=0.4)")
     print(f"    + Cosine Annealing LR with warm restarts")
-    print(f"    + Label smoothing (eps=0.1)")
-    print(f"    + Stacking Ensemble (RF + LGB + MLP -> LogisticRegression)")
+    print(f"    + Gradient clipping (max_norm=1.0)")
+    print(f"    + Stochastic Weight Averaging (SWA)")
+    print(f"    + MC Dropout uncertainty estimation (30 samples)")
+    print(f"    + Stacking Ensemble (RF + LGB + XGB + MLP -> LogisticRegression)")
     print(f"    + SHAP feature importance analysis")
-    print(f"    + Calibration curve")
+    print(f"    + Calibration curve + Uncertainty analysis")
+    print(f"    + Feature importance comparison across models")
+    print(f"    + Optuna hyperparameter tuning")
+    print(f"    + ONNX model export for production")
     print(f"  Total training samples: {len(X)}")
     print()
 

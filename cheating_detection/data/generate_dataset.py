@@ -24,11 +24,14 @@ from cheating_detection.config import (
     CLASS_NAMES,
     WINDOWS_PER_SESSION_MIN,
     WINDOWS_PER_SESSION_MAX,
-    ALL_FEATURE_NAMES,
+    VISUAL_FEATURE_NAMES,
+    BEHAVIORAL_FEATURE_NAMES,
     DATASET_NPZ,
     DATASET_CSV,
     DATA_DIR,
 )
+
+BASE_FEATURE_NAMES = VISUAL_FEATURE_NAMES + BEHAVIORAL_FEATURE_NAMES
 
 
 # ── Per-class feature distributions ──────────────────────────────────────────
@@ -209,14 +212,14 @@ def generate_dataset(
             X=X,
             y=y,
             session_ids=session_ids,
-            feature_names=np.array(ALL_FEATURE_NAMES),
+            feature_names=np.array(BASE_FEATURE_NAMES),
             class_names=np.array(CLASS_NAMES),
         )
         if verbose:
             print(f"[DataGen] Saved .npz → {DATASET_NPZ}")
 
     if save_csv:
-        df = pd.DataFrame(X, columns=ALL_FEATURE_NAMES)
+        df = pd.DataFrame(X, columns=BASE_FEATURE_NAMES)
         df.insert(0, "session_id", session_ids)
         df.insert(1, "label", y)
         df.insert(2, "class_name", [CLASS_NAMES[i] for i in y])

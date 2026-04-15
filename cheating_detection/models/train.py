@@ -1,13 +1,14 @@
 """
-train.py -- Training pipeline: RF, LightGBM, MLP (Focal Loss + MixUp + Cosine
-Annealing + BatchNorm + label smoothing), and Stacking Ensemble.
+train.py -- Training pipeline: RF, LightGBM, XGBoost, MLP (Focal Loss + MixUp +
+Cosine Annealing + BatchNorm + Gradient Clipping + SWA + MC Dropout),
+and Stacking Ensemble.
 
-v3 improvements:
-  - Focal Loss for hard-example mining (gaze class)
-  - MixUp augmentation during MLP training
-  - Cosine Annealing with Warm Restarts LR schedule
-  - LightGBM as 3rd base model
-  - Stacking Ensemble (meta-learner on OOF predictions)
+v4 improvements:
+  - Gradient clipping to prevent exploding gradients
+  - Stochastic Weight Averaging (SWA) for better generalization
+  - MC Dropout for uncertainty estimation at inference
+  - XGBoost as 4th base model
+  - Improved ensemble with 4 base models
 """
 
 import os
@@ -39,6 +40,9 @@ from cheating_detection.config import (
     LGB_LEARNING_RATE,
     LGB_MAX_DEPTH,
     LGB_NUM_LEAVES,
+    XGB_N_ESTIMATORS,
+    XGB_LEARNING_RATE,
+    XGB_MAX_DEPTH,
     MLP_HIDDEN_LAYERS,
     MLP_DROPOUT,
     MLP_LR,
@@ -56,10 +60,18 @@ from cheating_detection.config import (
     USE_COSINE_ANNEALING,
     COSINE_T_0,
     COSINE_T_MULT,
+    USE_GRADIENT_CLIPPING,
+    GRADIENT_CLIP_NORM,
+    USE_SWA,
+    SWA_START_EPOCH,
+    SWA_LR,
+    USE_MC_DROPOUT,
+    MC_DROPOUT_SAMPLES,
     CV_FOLDS,
     CLASS_NAMES,
     RF_MODEL_PATH,
     LGB_MODEL_PATH,
+    XGB_MODEL_PATH,
     MLP_MODEL_PATH,
     ENSEMBLE_MODEL_PATH,
     TRAINING_CURVES_PNG,
@@ -119,15 +131,18 @@ class ExamDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
-# -- MLP Architecture -------------------------------------------------------
+# -- MLP Architecture (with MC Dropout support) ------------------------------
 
 class MLP(nn.Module):
-    """MLP with BatchNorm, configurable depth and dropout."""
+    """MLP with BatchNorm, configurable depth, dropout, and MC Dropout support."""
 
     def __init__(self, input_dim=N_TOTAL_FEATURES, hidden_layers=None,
                  dropout=MLP_DROPOUT, n_classes=5, use_batch_norm=MLP_USE_BATCH_NORM):
         super().__init__()
         hidden_layers = hidden_layers or MLP_HIDDEN_LAYERS
+        self.mc_dropout = USE_MC_DROPOUT
+        self.n_mc_samples = MC_DROPOUT_SAMPLES
+
         layers = []
         prev_dim = input_dim
         for h in hidden_layers:
@@ -140,15 +155,46 @@ class MLP(nn.Module):
         layers.append(nn.Linear(prev_dim, n_classes))
         self.net = nn.Sequential(*layers)
 
+        # Kaiming initialization for better convergence
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
     def forward(self, x):
         return self.net(x)
 
     def predict_proba(self, x):
+        """Standard prediction (eval mode, no dropout)."""
         self.eval()
         with torch.no_grad():
             logits = self.forward(x)
             proba = torch.softmax(logits, dim=1)
         return proba.cpu().numpy()
+
+    def predict_proba_mc(self, x, n_samples=None):
+        """MC Dropout prediction: run forward pass multiple times with dropout ON.
+
+        Returns mean probabilities and uncertainty (std of predictions).
+        """
+        n = n_samples or self.n_mc_samples
+        self.train()  # keep dropout active
+        all_proba = []
+        with torch.no_grad():
+            for _ in range(n):
+                logits = self.forward(x)
+                proba = torch.softmax(logits, dim=1)
+                all_proba.append(proba.cpu().numpy())
+        self.eval()
+
+        all_proba = np.array(all_proba)  # (n_samples, batch, n_classes)
+        mean_proba = all_proba.mean(axis=0)
+        std_proba = all_proba.std(axis=0)
+        return mean_proba, std_proba
 
 
 # -- Random Forest -----------------------------------------------------------
@@ -222,6 +268,50 @@ def train_lightgbm(X_train, y_train, verbose=True):
     return model
 
 
+# -- XGBoost -----------------------------------------------------------------
+
+def train_xgboost(X_train, y_train, verbose=True):
+    """Train XGBoost with balanced class weights."""
+    try:
+        import xgboost as xgb
+    except ImportError:
+        if verbose:
+            print("[XGB] xgboost not installed (pip install xgboost), skipping.")
+        return None
+
+    if verbose:
+        print("\n[XGB] Training XGBoost ...")
+
+    # Compute sample weights for class balancing
+    unique, counts = np.unique(y_train, return_counts=True)
+    total = len(y_train)
+    n_classes = len(unique)
+    class_weights = {int(c): total / (n_classes * cnt) for c, cnt in zip(unique, counts)}
+    sample_weights = np.array([class_weights[int(y)] for y in y_train])
+
+    model = xgb.XGBClassifier(
+        n_estimators=XGB_N_ESTIMATORS,
+        learning_rate=XGB_LEARNING_RATE,
+        max_depth=XGB_MAX_DEPTH,
+        random_state=RANDOM_SEED,
+        n_jobs=-1,
+        eval_metric="mlogloss",
+        use_label_encoder=False,
+    )
+
+    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
+    cv_results = cross_validate(model, X_train, y_train, cv=cv, scoring="f1_macro", n_jobs=-1)
+    if verbose:
+        s = cv_results["test_score"]
+        print(f"[XGB] CV F1 (macro): {s.mean():.4f} +/- {s.std():.4f}")
+
+    model.fit(X_train, y_train, sample_weight=sample_weights)
+    save_sklearn_model(model, XGB_MODEL_PATH)
+    if verbose:
+        print(f"[XGB] Saved -> {XGB_MODEL_PATH}")
+    return model
+
+
 # -- Compute class weights ---------------------------------------------------
 
 def _compute_class_weights(y_train, device):
@@ -235,9 +325,10 @@ def _compute_class_weights(y_train, device):
     return weight_tensor.to(device)
 
 
-# -- MLP epoch runner (with MixUp support) -----------------------------------
+# -- MLP epoch runner (with MixUp + Gradient Clipping) -----------------------
 
-def _run_epoch(model, loader, criterion, optimizer=None, device="cpu", use_mixup=False):
+def _run_epoch(model, loader, criterion, optimizer=None, device="cpu",
+               use_mixup=False, clip_norm=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -266,6 +357,8 @@ def _run_epoch(model, loader, criterion, optimizer=None, device="cpu", use_mixup
 
         if training:
             loss.backward()
+            if clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
             optimizer.step()
 
         total_loss += loss.item() * len(y_batch)
@@ -278,13 +371,15 @@ def _run_epoch(model, loader, criterion, optimizer=None, device="cpu", use_mixup
 
 def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
               n_classes=5, verbose=True):
-    """Train MLP with Focal Loss, MixUp, Cosine Annealing, BatchNorm."""
+    """Train MLP with Focal Loss, MixUp, Cosine Annealing, Gradient Clipping, SWA."""
     torch.manual_seed(RANDOM_SEED)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if verbose:
         print(f"\n[MLP] Training on {device} ...")
         print(f"[MLP] Arch: {MLP_HIDDEN_LAYERS}, BN={MLP_USE_BATCH_NORM}, "
               f"Focal={USE_FOCAL_LOSS}, MixUp={USE_MIXUP}")
+        print(f"[MLP] GradClip={USE_GRADIENT_CLIPPING}({GRADIENT_CLIP_NORM}), "
+              f"SWA={USE_SWA}, MCDropout={USE_MC_DROPOUT}")
 
     train_ds = ExamDataset(X_train, y_train)
     val_ds = ExamDataset(X_val, y_val)
@@ -325,6 +420,24 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
                 optimizer, mode="min", factor=0.5, patience=7,
             )
 
+    # SWA setup
+    swa_model = None
+    swa_scheduler = None
+    if USE_SWA:
+        try:
+            from torch.optim.swa_utils import AveragedModel, SWALR
+            swa_model = AveragedModel(model).to(device)
+            swa_scheduler = SWALR(optimizer, swa_lr=SWA_LR)
+            if verbose:
+                print(f"[MLP] SWA: start_epoch={SWA_START_EPOCH}, lr={SWA_LR}")
+        except ImportError:
+            if verbose:
+                print("[MLP] SWA not available in this PyTorch version")
+            swa_model = None
+
+    # Gradient clipping norm
+    clip_norm = GRADIENT_CLIP_NORM if USE_GRADIENT_CLIPPING else None
+
     history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
     best_val_loss = float("inf")
     patience_counter = 0
@@ -332,7 +445,7 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
 
     for epoch in range(1, MLP_MAX_EPOCHS + 1):
         tr_loss, tr_acc = _run_epoch(model, train_loader, criterion, optimizer,
-                                     device, use_mixup=USE_MIXUP)
+                                     device, use_mixup=USE_MIXUP, clip_norm=clip_norm)
         va_loss, va_acc = _run_epoch(model, val_loader, criterion, None, device)
 
         history["train_loss"].append(tr_loss)
@@ -340,7 +453,11 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
         history["train_acc"].append(tr_acc)
         history["val_acc"].append(va_acc)
 
-        if scheduler is not None:
+        # Scheduler step
+        if swa_model is not None and epoch >= SWA_START_EPOCH:
+            swa_model.update_parameters(model)
+            swa_scheduler.step()
+        elif scheduler is not None:
             if USE_COSINE_ANNEALING:
                 scheduler.step(epoch)
             else:
@@ -363,8 +480,26 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
                     print(f"  Early stop at epoch {epoch} (patience={MLP_PATIENCE})")
                 break
 
+    # Load best weights before SWA
     if best_state is not None:
         model.load_state_dict(best_state)
+
+    # Apply SWA averaging if we trained long enough
+    if swa_model is not None and epoch >= SWA_START_EPOCH:
+        try:
+            from torch.optim.swa_utils import update_bn
+            update_bn(train_loader, swa_model, device=device)
+            # Use SWA model weights
+            model.load_state_dict({
+                k.replace("module.", ""): v
+                for k, v in swa_model.state_dict().items()
+                if k.startswith("module.")
+            })
+            if verbose:
+                print("[MLP] Applied SWA weight averaging")
+        except Exception as e:
+            if verbose:
+                print(f"[MLP] SWA finalization skipped ({e})")
 
     model.eval()
     save_pytorch_model(model, MLP_MODEL_PATH)
@@ -425,13 +560,12 @@ def train_ensemble(base_models, X_train, y_train, X_val, y_val, verbose=True):
     """
     if verbose:
         print(f"\n[Ensemble] Building stacking ensemble with {len(base_models)} models ...")
+        for name, _ in base_models:
+            print(f"  - {name}")
 
-    # Generate out-of-fold predictions for meta-learner training
+    # Generate predictions for meta-learner training
     try:
-        kf = StratifiedKFold(n_splits=3, shuffle=True, random_state=RANDOM_SEED)
         meta_train = []
-        meta_y = []
-
         for name, model in base_models:
             if isinstance(model, MLP):
                 x_t = torch.tensor(X_train, dtype=torch.float32)
@@ -446,8 +580,9 @@ def train_ensemble(base_models, X_train, y_train, X_val, y_val, verbose=True):
 
         # Train meta-learner on training set predictions
         meta_lr = LogisticRegression(
-            max_iter=500, random_state=RANDOM_SEED,
+            max_iter=1000, random_state=RANDOM_SEED,
             class_weight="balanced", C=1.0,
+            solver="lbfgs", multi_class="multinomial",
         )
         meta_lr.fit(meta_X_train, y_train)
 
@@ -481,7 +616,7 @@ def train_ensemble(base_models, X_train, y_train, X_val, y_val, verbose=True):
         best_f1 = 0
         best_w = [1.0 / n] * n
 
-        for _ in range(50):
+        for _ in range(100):
             w = np.random.dirichlet(np.ones(n))
             ens = EnsembleModel(base_models, weights=w.tolist())
             y_pred = ens.predict(X_val)
