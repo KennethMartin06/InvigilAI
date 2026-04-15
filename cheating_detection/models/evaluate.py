@@ -45,6 +45,10 @@ from cheating_detection.config import (
     MLP_HIDDEN_LAYERS,
     MLP_DROPOUT,
     RANDOM_SEED,
+    USE_SHAP,
+    SHAP_PNG,
+    CALIBRATION_PNG,
+    ALL_FEATURE_NAMES,
 )
 from cheating_detection.models.model_utils import (
     compute_metrics,
@@ -499,6 +503,31 @@ def run_full_evaluation(
     roc_auc = plot_roc_curve(best_model, X_test, y_test, model_name=best_model_name)
     avg_prec = plot_precision_recall_curve(best_model, X_test, y_test, model_name=best_model_name)
 
+    # 5.6 SHAP feature importance
+    shap_done = False
+    if USE_SHAP and "Random Forest" in models:
+        if verbose:
+            print("\n" + "="*60)
+            print("  STEP 5.6 -- SHAP Feature Importance")
+            print("="*60)
+        try:
+            plot_shap_importance(models["Random Forest"], X_test, verbose=verbose)
+            shap_done = True
+        except Exception as e:
+            if verbose:
+                print(f"  SHAP skipped ({e})")
+
+    # 5.7 Calibration curve
+    if verbose:
+        print("\n" + "="*60)
+        print("  STEP 5.7 -- Calibration Curve")
+        print("="*60)
+    try:
+        plot_calibration_curve(best_model, X_test, y_test, model_name=best_model_name)
+    except Exception as e:
+        if verbose:
+            print(f"  Calibration plot skipped ({e})")
+
     # Print comparison table
     print_summary_table(clf_metrics)
 
@@ -516,6 +545,80 @@ def run_full_evaluation(
         "average_precision": avg_prec,
     }
     save_results(full_results)
-    print(f"\n[Eval] Results saved → {RESULTS_JSON}")
+    print(f"\n[Eval] Results saved -> {RESULTS_JSON}")
 
     return full_results
+
+
+# -- 5.6 SHAP Feature Importance --------------------------------------------
+
+def plot_shap_importance(rf_model, X_test, save_path=SHAP_PNG, verbose=True):
+    """Plot SHAP feature importance for the Random Forest model."""
+    import shap
+
+    if verbose:
+        print("[SHAP] Computing SHAP values (TreeExplainer) ...")
+
+    explainer = shap.TreeExplainer(rf_model)
+    # Use a subsample for speed
+    n_sample = min(1000, len(X_test))
+    X_sample = X_test[:n_sample]
+    shap_values = explainer.shap_values(X_sample)
+
+    # Mean absolute SHAP values across all classes
+    if isinstance(shap_values, list):
+        mean_shap = np.mean([np.abs(sv).mean(axis=0) for sv in shap_values], axis=0)
+    else:
+        mean_shap = np.abs(shap_values).mean(axis=0)
+        if mean_shap.ndim > 1:
+            mean_shap = mean_shap.mean(axis=1)
+
+    feature_names = ALL_FEATURE_NAMES[:len(mean_shap)]
+    indices = np.argsort(mean_shap)[::-1]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    top_n = min(15, len(mean_shap))
+    top_idx = indices[:top_n]
+    ax.barh(range(top_n), mean_shap[top_idx][::-1], color="steelblue")
+    ax.set_yticks(range(top_n))
+    ax.set_yticklabels([feature_names[i] for i in top_idx][::-1])
+    ax.set_xlabel("Mean |SHAP value|")
+    ax.set_title("SHAP Feature Importance (Random Forest)")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    if verbose:
+        print(f"[SHAP] Top 5 features:")
+        for rank, idx in enumerate(indices[:5]):
+            print(f"  {rank+1}. {feature_names[idx]}: {mean_shap[idx]:.4f}")
+        print(f"[Plot] SHAP importance -> {save_path}")
+
+
+# -- 5.7 Calibration Curve --------------------------------------------------
+
+def plot_calibration_curve(model, X_test, y_test, model_name="Ensemble",
+                           save_path=CALIBRATION_PNG, verbose=True):
+    """Plot reliability diagram (calibration curve) for binary cheating detection."""
+    from sklearn.calibration import calibration_curve as sk_calibration_curve
+
+    proba = _get_proba(model, X_test)
+    cheat_prob = cheating_probability(proba)
+    y_binary = (y_test > 0).astype(int)
+
+    prob_true, prob_pred = sk_calibration_curve(y_binary, cheat_prob, n_bins=10, strategy="uniform")
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.plot(prob_pred, prob_true, "s-", label=model_name, linewidth=2, markersize=8)
+    ax.plot([0, 1], [0, 1], "k--", label="Perfectly calibrated")
+    ax.set_xlabel("Mean predicted probability")
+    ax.set_ylabel("Fraction of positives")
+    ax.set_title(f"Calibration Curve -- {model_name}")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    if verbose:
+        print(f"[Plot] Calibration curve -> {save_path}")

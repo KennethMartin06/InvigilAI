@@ -1,5 +1,8 @@
 """
 config.py -- Central configuration for all hyperparameters and constants.
+
+v3: Added derived features (20 total), Focal Loss, LightGBM, Cosine Annealing,
+    MixUp, SHAP, calibration settings.
 """
 
 import os
@@ -10,7 +13,6 @@ RANDOM_SEED = 42
 # -- Dataset ----------------------------------------------------------------
 N_SESSIONS = 240
 
-# Class distribution
 CLASS_COUNTS = {
     0: 102,   # Normal Behavior
     1: 58,    # Gaze / Distraction
@@ -26,38 +28,34 @@ CLASS_NAMES = [
     "Abnormal Keystroke",
 ]
 
-# Windows per session (~2-second windows)
 WINDOWS_PER_SESSION_MIN = 15
 WINDOWS_PER_SESSION_MAX = 30
 
 # -- Features ---------------------------------------------------------------
 N_VISUAL_FEATURES = 8
 N_BEHAVIORAL_FEATURES = 8
-N_TOTAL_FEATURES = N_VISUAL_FEATURES + N_BEHAVIORAL_FEATURES
+N_DERIVED_FEATURES = 4
+N_BASE_FEATURES = N_VISUAL_FEATURES + N_BEHAVIORAL_FEATURES      # 16
+N_TOTAL_FEATURES = N_BASE_FEATURES + N_DERIVED_FEATURES            # 20
 
 VISUAL_FEATURE_NAMES = [
-    "gaze_yaw",
-    "gaze_pitch",
-    "head_yaw",
-    "head_pitch",
-    "head_roll",
-    "face_count",
-    "gaze_deviation_ratio",
-    "face_embedding_norm",
+    "gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
+    "head_roll", "face_count", "gaze_deviation_ratio", "face_embedding_norm",
 ]
 
 BEHAVIORAL_FEATURE_NAMES = [
-    "keystroke_rate",
-    "mean_dwell_time",
-    "mean_flight_time",
-    "burst_coefficient",
-    "cursor_velocity",
-    "click_frequency",
-    "idle_ratio",
-    "trajectory_linearity",
+    "keystroke_rate", "mean_dwell_time", "mean_flight_time", "burst_coefficient",
+    "cursor_velocity", "click_frequency", "idle_ratio", "trajectory_linearity",
 ]
 
-ALL_FEATURE_NAMES = VISUAL_FEATURE_NAMES + BEHAVIORAL_FEATURE_NAMES
+DERIVED_FEATURE_NAMES = [
+    "gaze_speed",                # sqrt(yaw^2 + pitch^2)
+    "head_movement_magnitude",   # sqrt(head_yaw^2 + head_pitch^2 + head_roll^2)
+    "keystroke_irregularity",    # burst_coefficient * keystroke_rate
+    "activity_imbalance",        # cursor_velocity / (keystroke_rate + eps)
+]
+
+ALL_FEATURE_NAMES = VISUAL_FEATURE_NAMES + BEHAVIORAL_FEATURE_NAMES + DERIVED_FEATURE_NAMES
 
 # -- Train / Val / Test Split -----------------------------------------------
 TRAIN_RATIO = 0.70
@@ -73,6 +71,12 @@ SVM_PARAM_GRID = {
 # -- Random Forest -----------------------------------------------------------
 RF_N_ESTIMATORS = 300
 
+# -- LightGBM ---------------------------------------------------------------
+LGB_N_ESTIMATORS = 300
+LGB_LEARNING_RATE = 0.05
+LGB_MAX_DEPTH = 7
+LGB_NUM_LEAVES = 63
+
 # -- MLP (PyTorch) -----------------------------------------------------------
 MLP_HIDDEN_LAYERS = [256, 128, 64]
 MLP_DROPOUT = 0.3
@@ -83,6 +87,21 @@ MLP_PATIENCE = 20
 MLP_USE_BATCH_NORM = True
 MLP_USE_CLASS_WEIGHTS = True
 MLP_LR_SCHEDULER = True
+MLP_LABEL_SMOOTHING = 0.1
+
+# -- Focal Loss --------------------------------------------------------------
+USE_FOCAL_LOSS = True
+FOCAL_GAMMA = 2.0
+FOCAL_ALPHA = None   # None = use class weights, or list of per-class alphas
+
+# -- MixUp -------------------------------------------------------------------
+USE_MIXUP = True
+MIXUP_ALPHA = 0.4
+
+# -- Cosine Annealing --------------------------------------------------------
+USE_COSINE_ANNEALING = True
+COSINE_T_0 = 20       # restart every 20 epochs
+COSINE_T_MULT = 2     # double the period after each restart
 
 # -- Cross-Validation -------------------------------------------------------
 CV_FOLDS = 5
@@ -96,6 +115,14 @@ THRESHOLD_STEP = 0.05
 # -- SMOTE -------------------------------------------------------------------
 USE_SMOTE = True
 
+# -- Preprocessing -----------------------------------------------------------
+USE_KNN_IMPUTATION = True
+KNN_IMPUTE_NEIGHBORS = 5
+USE_ROBUST_SCALER = True
+
+# -- SHAP --------------------------------------------------------------------
+USE_SHAP = True
+
 # -- Paths -------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -107,6 +134,7 @@ DATASET_CSV = os.path.join(DATA_DIR, "synthetic_dataset.csv")
 SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
 SVM_MODEL_PATH = os.path.join(MODELS_DIR, "svm_model.joblib")
 RF_MODEL_PATH = os.path.join(MODELS_DIR, "rf_model.joblib")
+LGB_MODEL_PATH = os.path.join(MODELS_DIR, "lgb_model.joblib")
 MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.pth")
 ENSEMBLE_MODEL_PATH = os.path.join(MODELS_DIR, "ensemble_model.joblib")
 RESULTS_JSON = os.path.join(OUTPUTS_DIR, "results.json")
@@ -117,3 +145,5 @@ ABLATION_PNG = os.path.join(OUTPUTS_DIR, "ablation_results.png")
 THRESHOLD_PNG = os.path.join(OUTPUTS_DIR, "threshold_analysis.png")
 ROC_PNG = os.path.join(OUTPUTS_DIR, "roc_curve.png")
 PR_CURVE_PNG = os.path.join(OUTPUTS_DIR, "precision_recall_curve.png")
+SHAP_PNG = os.path.join(OUTPUTS_DIR, "shap_feature_importance.png")
+CALIBRATION_PNG = os.path.join(OUTPUTS_DIR, "calibration_curve.png")
