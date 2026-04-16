@@ -219,6 +219,118 @@ ENSEMBLE_MODEL_PATH = os.path.join(MODELS_DIR, "ensemble_model.joblib")
 ONNX_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.onnx")
 RESULTS_JSON = os.path.join(OUTPUTS_DIR, "results.json")
 
+# -- NoisyStudent Self-Training ---------------------------------------------
+USE_NOISY_STUDENT = True
+NOISY_STUDENT_ITERATIONS = 3
+NOISY_STUDENT_UNLABELED_RATIO = 2.0   # unlabeled:labeled ratio
+NOISY_STUDENT_CONFIDENCE_THRESHOLD = 0.80
+
+# -- GAN-based Synthetic Data -----------------------------------------------
+USE_GAN_SYNTHETIC = True
+GAN_LATENT_DIM = 32
+GAN_HIDDEN_DIM = 128
+GAN_EPOCHS = 200
+GAN_BATCH_SIZE = 64
+GAN_LR = 0.0002
+GAN_SAMPLES_PER_CLASS = 200
+
+# -- Temporal Augmentation ---------------------------------------------------
+USE_TEMPORAL_AUGMENTATION = True
+TIME_WARP_SIGMA = 0.2
+TIME_WARP_KNOT = 4
+MAGNITUDE_WARP_SIGMA = 0.2
+
+# -- External Dataset Loaders ------------------------------------------------
+TOBII_DATA_PATH = os.path.join(BASE_DIR, "data", "tobii")
+SMI_DATA_PATH = os.path.join(BASE_DIR, "data", "smi")
+CMU_KEYSTROKE_PATH = os.path.join(BASE_DIR, "data", "cmu_keystroke")
+GREYC_KEYSTROKE_PATH = os.path.join(BASE_DIR, "data", "greyc_keystroke")
+
+# -- Domain Adaptation -------------------------------------------------------
+USE_DOMAIN_ADAPTATION = True
+DA_LAMBDA = 0.1                # DANN gradient reversal strength
+DA_PRETRAIN_EPOCHS = 50
+DA_FINETUNE_EPOCHS = 30
+TRANSFER_FREEZE_LAYERS = 2     # number of layers to freeze during transfer
+
+# -- Transformer Model -------------------------------------------------------
+USE_TRANSFORMER = True
+TRANSFORMER_DIM = 128
+TRANSFORMER_HEADS = 4
+TRANSFORMER_LAYERS = 3
+TRANSFORMER_DROPOUT = 0.2
+TRANSFORMER_FF_DIM = 256
+
+# -- Vision Transformer (ViT) -----------------------------------------------
+USE_VIT = True
+VIT_IMAGE_SIZE = 64
+VIT_PATCH_SIZE = 8
+VIT_DIM = 192
+VIT_DEPTH = 4
+VIT_HEADS = 4
+VIT_MLP_DIM = 384
+VIT_CHANNELS = 3
+
+# -- Temporal CNN ------------------------------------------------------------
+USE_TCN = True
+TCN_CHANNELS = [32, 64, 128]
+TCN_KERNEL_SIZE = 3
+TCN_DROPOUT = 0.2
+TCN_SEQ_LENGTH = 50
+
+# -- Graph Neural Network ---------------------------------------------------
+USE_GNN = True
+GNN_HIDDEN_DIM = 64
+GNN_LAYERS = 3
+GNN_DROPOUT = 0.3
+GNN_EDGE_THRESHOLD = 0.3   # correlation threshold for edges
+
+# -- Ensemble Enhancements --------------------------------------------------
+USE_WEIGHTED_VOTING = True
+USE_MULTI_TASK_LEARNING = True
+MTL_TASKS = ["cheating_type", "severity", "confidence"]
+
+# -- Advanced Feature Engineering -------------------------------------------
+USE_BLINK_FEATURES = True
+USE_KEYSTROKE_BIGRAM = True
+USE_GAZE_FIXATION = True
+USE_AUDIO_SPECTRAL = True
+USE_BEHAVIORAL_ENTROPY = True
+USE_CROSS_MODAL_ATTENTION = True
+USE_LSTM_FEATURES = True
+USE_GAZE_TEXTURE = True
+
+# -- LSTM Temporal Features -------------------------------------------------
+LSTM_HIDDEN_DIM = 64
+LSTM_LAYERS = 2
+LSTM_DROPOUT = 0.3
+LSTM_BIDIRECTIONAL = True
+
+# -- Fairness Metrics -------------------------------------------------------
+USE_FAIRNESS_METRICS = True
+FAIRNESS_DEMOGRAPHIC_GROUPS = ["group_a", "group_b", "group_c"]
+DISPARATE_IMPACT_THRESHOLD = 0.8   # 80% rule
+
+# -- Per-Class Uncertainty ---------------------------------------------------
+USE_PER_CLASS_UNCERTAINTY = True
+UNCERTAINTY_CONFIDENCE_LEVEL = 0.95
+
+# -- Model Degradation Tracking ---------------------------------------------
+USE_DEGRADATION_TRACKING = True
+DEGRADATION_WINDOW_SIZE = 100
+DEGRADATION_ALERT_THRESHOLD = 0.05   # alert if accuracy drops by 5%
+
+# -- Paths for New Modules --------------------------------------------------
+NOISY_STUDENT_PNG = os.path.join(OUTPUTS_DIR, "noisy_student.png")
+GAN_SYNTHETIC_PNG = os.path.join(OUTPUTS_DIR, "gan_synthetic.png")
+TRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, "transformer_model.pth")
+VIT_MODEL_PATH = os.path.join(MODELS_DIR, "vit_model.pth")
+TCN_MODEL_PATH = os.path.join(MODELS_DIR, "tcn_model.pth")
+GNN_MODEL_PATH = os.path.join(MODELS_DIR, "gnn_model.pth")
+FAIRNESS_PNG = os.path.join(OUTPUTS_DIR, "fairness_analysis.png")
+DEGRADATION_PNG = os.path.join(OUTPUTS_DIR, "model_degradation.png")
+MULTITASK_MODEL_PATH = os.path.join(MODELS_DIR, "multitask_model.pth")
+
 CONFUSION_MATRIX_PNG = os.path.join(OUTPUTS_DIR, "confusion_matrix.png")
 TRAINING_CURVES_PNG = os.path.join(OUTPUTS_DIR, "training_curves.png")
 ABLATION_PNG = os.path.join(OUTPUTS_DIR, "ablation_results.png")
