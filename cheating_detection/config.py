@@ -1,8 +1,9 @@
 """
 config.py -- Central configuration for all hyperparameters and constants.
 
-v4: Added 6 new derived features (26 total), Borderline-SMOTE, gradient clipping,
-    SWA, MC Dropout, XGBoost, Optuna tuning, ONNX export settings.
+v5: 16 derived features (32 total), SMOTE-ENN, data augmentation, temperature
+    scaling, conformal prediction, OOD detection, concept drift, cost-sensitive
+    evaluation, adversarial robustness, cascade classifier.
 """
 
 import os
@@ -34,9 +35,9 @@ WINDOWS_PER_SESSION_MAX = 30
 # -- Features ---------------------------------------------------------------
 N_VISUAL_FEATURES = 8
 N_BEHAVIORAL_FEATURES = 8
-N_DERIVED_FEATURES = 10   # 4 original + 6 new
+N_DERIVED_FEATURES = 16   # 10 original + 6 new
 N_BASE_FEATURES = N_VISUAL_FEATURES + N_BEHAVIORAL_FEATURES      # 16
-N_TOTAL_FEATURES = N_BASE_FEATURES + N_DERIVED_FEATURES            # 26
+N_TOTAL_FEATURES = N_BASE_FEATURES + N_DERIVED_FEATURES            # 32
 
 VISUAL_FEATURE_NAMES = [
     "gaze_yaw", "gaze_pitch", "head_yaw", "head_pitch",
@@ -54,13 +55,20 @@ DERIVED_FEATURE_NAMES = [
     "head_movement_magnitude",   # sqrt(head_yaw^2 + head_pitch^2 + head_roll^2)
     "keystroke_irregularity",    # burst_coefficient * keystroke_rate
     "activity_imbalance",        # cursor_velocity / (keystroke_rate + eps)
-    # New 6
+    # v4 batch (6)
     "typing_rhythm",             # mean_dwell_time / (mean_flight_time + eps)
     "interaction_intensity",     # keystroke_rate * click_frequency
     "gaze_head_coupling",        # gaze_speed * head_movement_magnitude
     "suspicious_idle_pattern",   # idle_ratio * burst_coefficient
     "trajectory_deviation",      # (1 - trajectory_linearity) * cursor_velocity
     "engagement_score",          # (1 - idle_ratio) * keystroke_rate
+    # v5 batch (6)
+    "gaze_fixation_score",       # 1 / (gaze_speed + 1)
+    "head_gaze_divergence",      # |head_mag - gaze_speed|
+    "keystroke_variability",     # |dwell - flight| / (dwell + flight + eps)
+    "movement_complexity",       # trajectory_deviation * head_mag
+    "focus_score",               # (1 - gaze_dev_ratio) * (1 - idle_ratio)
+    "behavioral_entropy",        # entropy of normalized behavioral features
 ]
 
 ALL_FEATURE_NAMES = VISUAL_FEATURE_NAMES + BEHAVIORAL_FEATURE_NAMES + DERIVED_FEATURE_NAMES
@@ -141,6 +149,13 @@ THRESHOLD_STEP = 0.05
 # -- SMOTE -------------------------------------------------------------------
 USE_SMOTE = True
 USE_BORDERLINE_SMOTE = True   # use Borderline-SMOTE instead of basic SMOTE
+USE_SMOTE_ENN = True          # apply ENN cleaning after SMOTE
+
+# -- Data Augmentation -------------------------------------------------------
+USE_DATA_AUGMENTATION = True
+AUGMENTATION_NOISE_STD = 0.05
+AUGMENTATION_FEATURE_DROPOUT_RATE = 0.1
+AUGMENTATION_MULTIPLIER = 2   # how many augmented copies per minority sample
 
 # -- Preprocessing -----------------------------------------------------------
 USE_KNN_IMPUTATION = True
@@ -149,7 +164,7 @@ USE_ROBUST_SCALER = True
 
 # -- Feature Selection -------------------------------------------------------
 USE_FEATURE_SELECTION = False   # mutual-information based feature selection
-FEATURE_SELECTION_K = 22        # top K features to keep
+FEATURE_SELECTION_K = 28        # top K features to keep
 
 # -- SHAP --------------------------------------------------------------------
 USE_SHAP = True
@@ -157,6 +172,34 @@ USE_SHAP = True
 # -- Optuna ------------------------------------------------------------------
 OPTUNA_N_TRIALS = 50
 OPTUNA_TIMEOUT = 600   # seconds
+
+# -- Temperature Scaling (post-hoc calibration) ------------------------------
+USE_TEMPERATURE_SCALING = True
+
+# -- Conformal Prediction ---------------------------------------------------
+USE_CONFORMAL_PREDICTION = True
+CONFORMAL_ALPHA = 0.10   # target error rate (90% coverage)
+
+# -- OOD Detection -----------------------------------------------------------
+USE_OOD_DETECTION = True
+OOD_PERCENTILE = 95   # samples above this Mahalanobis percentile are OOD
+
+# -- Concept Drift -----------------------------------------------------------
+USE_DRIFT_DETECTION = True
+DRIFT_PSI_THRESHOLD = 0.2   # Population Stability Index threshold
+
+# -- Cost-Sensitive Evaluation -----------------------------------------------
+# Cost of false negative (missed cheater) vs false positive (wrongly accused)
+COST_FALSE_NEGATIVE = 5.0
+COST_FALSE_POSITIVE = 1.0
+
+# -- Adversarial Robustness -------------------------------------------------
+USE_ADVERSARIAL_TEST = True
+ADVERSARIAL_EPSILON = 0.1   # FGSM perturbation magnitude
+
+# -- Cascade Classifier ------------------------------------------------------
+USE_CASCADE_CLASSIFIER = True
+CASCADE_CONFIDENCE_THRESHOLD = 0.85   # below this -> second-stage review
 
 # -- Paths -------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -186,3 +229,8 @@ SHAP_PNG = os.path.join(OUTPUTS_DIR, "shap_feature_importance.png")
 CALIBRATION_PNG = os.path.join(OUTPUTS_DIR, "calibration_curve.png")
 UNCERTAINTY_PNG = os.path.join(OUTPUTS_DIR, "uncertainty_analysis.png")
 FEATURE_IMPORTANCE_PNG = os.path.join(OUTPUTS_DIR, "feature_importance_comparison.png")
+OOD_PNG = os.path.join(OUTPUTS_DIR, "ood_detection.png")
+DRIFT_PNG = os.path.join(OUTPUTS_DIR, "drift_analysis.png")
+ADVERSARIAL_PNG = os.path.join(OUTPUTS_DIR, "adversarial_robustness.png")
+CASCADE_PNG = os.path.join(OUTPUTS_DIR, "cascade_analysis.png")
+COST_ANALYSIS_PNG = os.path.join(OUTPUTS_DIR, "cost_analysis.png")
