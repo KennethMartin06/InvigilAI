@@ -1,7 +1,8 @@
 """
 preprocess.py -- Data cleaning, derived features, SMOTE-ENN, augmentation, scaling.
 
-v5: 16 derived features (16 -> 32 dim), Borderline-SMOTE+ENN, data augmentation.
+v6: Added GAN synthetic data, NoisyStudent self-training, temporal augmentation,
+    and domain-adaptation label propagation into the preprocessing pipeline.
 """
 
 import os
@@ -28,6 +29,13 @@ from cheating_detection.config import (
     USE_FEATURE_SELECTION,
     FEATURE_SELECTION_K,
     N_BASE_FEATURES,
+    USE_GAN_SYNTHETIC,
+    GAN_SAMPLES_PER_CLASS,
+    USE_NOISY_STUDENT,
+    NOISY_STUDENT_ITERATIONS,
+    NOISY_STUDENT_UNLABELED_RATIO,
+    NOISY_STUDENT_CONFIDENCE_THRESHOLD,
+    USE_TEMPORAL_AUGMENTATION,
 )
 
 
@@ -253,8 +261,81 @@ def load_scaler(path=SCALER_PATH):
     return joblib.load(path)
 
 
-def preprocess(X, y, verbose=True):
-    """Full pipeline: clean -> derived -> split -> augment -> SMOTE-ENN -> scale."""
+def apply_temporal_augmentation(X_train, y_train, verbose=True):
+    """Apply temporal augmentation (time warp, magnitude warp, window slicing)."""
+    try:
+        from cheating_detection.preprocessing.temporal_augment import (
+            time_warp, magnitude_warp, window_slice,
+        )
+        augmented_X, augmented_y = [], []
+        for fn_name, fn in [("time_warp", time_warp), ("magnitude_warp", magnitude_warp),
+                             ("window_slice", window_slice)]:
+            try:
+                X_aug = fn(X_train)
+                augmented_X.append(X_aug)
+                augmented_y.append(y_train.copy())
+            except Exception as e:
+                if verbose:
+                    print(f"[TemporalAug] {fn_name} skipped ({e})")
+        if augmented_X:
+            X_train = np.vstack([X_train] + augmented_X)
+            y_train = np.concatenate([y_train] + augmented_y)
+            if verbose:
+                print(f"[TemporalAug] Applied 3 transforms -> {len(X_train)} samples")
+    except Exception as e:
+        if verbose:
+            print(f"[TemporalAug] Skipped ({e})")
+    return X_train, y_train
+
+
+def apply_gan_synthesis(X_train, y_train, verbose=True):
+    """Generate GAN synthetic samples per class and append to training set."""
+    try:
+        from cheating_detection.preprocessing.gan_synthetic import ConditionalWGAN, generate_synthetic_data
+        n_classes = int(y_train.max()) + 1
+        gan = ConditionalWGAN(input_dim=X_train.shape[1], n_classes=n_classes)
+        gan.train(X_train, y_train, verbose=False)
+        X_syn, y_syn = generate_synthetic_data(
+            gan, n_classes=n_classes,
+            samples_per_class=GAN_SAMPLES_PER_CLASS,
+            feature_dim=X_train.shape[1],
+        )
+        X_train = np.vstack([X_train, X_syn])
+        y_train = np.concatenate([y_train, y_syn])
+        if verbose:
+            print(f"[GAN] Generated {len(X_syn)} synthetic samples -> {len(X_train)} total")
+    except Exception as e:
+        if verbose:
+            print(f"[GAN] Skipped ({e})")
+    return X_train, y_train
+
+
+def apply_noisy_student(X_train, y_train, X_unlabeled=None, verbose=True):
+    """Run NoisyStudent self-training iterations."""
+    try:
+        from cheating_detection.preprocessing.noisy_student import NoisyStudentTrainer
+        if X_unlabeled is None:
+            rng = np.random.RandomState(RANDOM_SEED)
+            n_unlabeled = int(len(X_train) * NOISY_STUDENT_UNLABELED_RATIO)
+            noise = rng.normal(0, 0.05, size=(n_unlabeled, X_train.shape[1]))
+            X_unlabeled = X_train[rng.choice(len(X_train), n_unlabeled, replace=True)] + noise
+
+        trainer = NoisyStudentTrainer(
+            n_iterations=NOISY_STUDENT_ITERATIONS,
+            confidence_threshold=NOISY_STUDENT_CONFIDENCE_THRESHOLD,
+        )
+        X_train, y_train = trainer.fit(X_train, y_train, X_unlabeled, verbose=verbose)
+        if verbose:
+            print(f"[NoisyStudent] After {NOISY_STUDENT_ITERATIONS} iterations: {len(X_train)} samples")
+    except Exception as e:
+        if verbose:
+            print(f"[NoisyStudent] Skipped ({e})")
+    return X_train, y_train
+
+
+def preprocess(X, y, X_unlabeled=None, verbose=True):
+    """Full pipeline: clean -> derived -> split -> temporal aug -> GAN -> NoisyStudent
+    -> basic augment -> SMOTE-ENN -> scale."""
 
     # 1. Clean
     X = replace_invalid_values(X)
@@ -269,7 +350,19 @@ def preprocess(X, y, verbose=True):
     if verbose:
         print(f"[Preprocess] Train: {X_train.shape[0]} | Val: {X_val.shape[0]} | Test: {X_test.shape[0]}")
 
-    # 4. Data augmentation (training only, before SMOTE)
+    # 4. Temporal augmentation (training only)
+    if USE_TEMPORAL_AUGMENTATION:
+        X_train, y_train = apply_temporal_augmentation(X_train, y_train, verbose=verbose)
+
+    # 5. GAN synthetic data (training only)
+    if USE_GAN_SYNTHETIC:
+        X_train, y_train = apply_gan_synthesis(X_train, y_train, verbose=verbose)
+
+    # 6. NoisyStudent self-training (training only)
+    if USE_NOISY_STUDENT:
+        X_train, y_train = apply_noisy_student(X_train, y_train, X_unlabeled, verbose=verbose)
+
+    # 7. Standard data augmentation (training only, before SMOTE)
     if USE_DATA_AUGMENTATION:
         try:
             from cheating_detection.preprocessing.augment import augment_minority_classes
@@ -278,24 +371,24 @@ def preprocess(X, y, verbose=True):
             if verbose:
                 print(f"[Augment] Skipped ({e})")
 
-    # 5. SMOTE-ENN (training only)
+    # 8. SMOTE-ENN (training only)
     if USE_SMOTE:
         X_train, y_train = apply_smote(X_train, y_train, verbose=verbose)
 
-    # 6. Fit scaler on train, transform all
+    # 9. Fit scaler on train, transform all
     scaler = fit_scaler(X_train)
     X_train_s = scaler.transform(X_train)
     X_val_s = scaler.transform(X_val)
     X_test_s = scaler.transform(X_test)
 
-    # 7. Optional feature selection
+    # 10. Optional feature selection
     selector = None
     if USE_FEATURE_SELECTION:
         X_train_s, X_val_s, X_test_s, selector = apply_feature_selection(
             X_train_s, y_train, X_val_s, X_test_s, verbose=verbose,
         )
 
-    # 8. Save
+    # 11. Save
     os.makedirs(MODELS_DIR, exist_ok=True)
     save_scaler(scaler)
     if verbose:
@@ -305,8 +398,9 @@ def preprocess(X, y, verbose=True):
         print(f"[Preprocess] Final train: {X_train_s.shape[0]} x {X_train_s.shape[1]} features")
         print(f"[Preprocess] Scaler: {'RobustScaler' if USE_ROBUST_SCALER else 'StandardScaler'}")
         print(f"[Preprocess] Oversampling: {smote_type}")
-        if USE_DATA_AUGMENTATION:
-            print(f"[Preprocess] Data augmentation: enabled")
+        print(f"[Preprocess] Temporal aug: {'enabled' if USE_TEMPORAL_AUGMENTATION else 'off'}")
+        print(f"[Preprocess] GAN synthesis: {'enabled' if USE_GAN_SYNTHETIC else 'off'}")
+        print(f"[Preprocess] NoisyStudent:  {'enabled' if USE_NOISY_STUDENT else 'off'}")
         print(f"[Preprocess] Saved -> {SCALER_PATH}")
 
     return {

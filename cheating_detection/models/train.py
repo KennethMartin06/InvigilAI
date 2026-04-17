@@ -69,6 +69,7 @@ from cheating_detection.config import (
     MC_DROPOUT_SAMPLES,
     CV_FOLDS,
     CLASS_NAMES,
+    MLP_WARMUP_EPOCHS,
     RF_MODEL_PATH,
     LGB_MODEL_PATH,
     XGB_MODEL_PATH,
@@ -199,14 +200,22 @@ class MLP(nn.Module):
 
 # -- Random Forest -----------------------------------------------------------
 
-def train_random_forest(X_train, y_train, verbose=True):
+def train_random_forest(X_train, y_train, verbose=True, tuned_params=None):
     if verbose:
-        print("\n[RF] Training Random Forest (300 trees, balanced) ...")
+        print("\n[RF] Training Random Forest ...")
 
-    rf = RandomForestClassifier(
+    base = dict(
         n_estimators=RF_N_ESTIMATORS, class_weight="balanced",
         random_state=RANDOM_SEED, n_jobs=-1,
     )
+    if tuned_params:
+        base.update(tuned_params)
+        base["class_weight"] = "balanced"
+        base["random_state"] = RANDOM_SEED
+        base["n_jobs"] = -1
+        if verbose:
+            print(f"[RF] Applying tuned params: {tuned_params}")
+    rf = RandomForestClassifier(**base)
 
     cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
     cv_results = cross_validate(rf, X_train, y_train, cv=cv, scoring="f1_macro", n_jobs=-1)
@@ -232,7 +241,7 @@ def train_random_forest(X_train, y_train, verbose=True):
 
 # -- LightGBM ---------------------------------------------------------------
 
-def train_lightgbm(X_train, y_train, verbose=True):
+def train_lightgbm(X_train, y_train, verbose=True, tuned_params=None):
     """Train LightGBM with balanced class weights."""
     try:
         import lightgbm as lgb
@@ -244,7 +253,7 @@ def train_lightgbm(X_train, y_train, verbose=True):
     if verbose:
         print("\n[LGB] Training LightGBM ...")
 
-    model = lgb.LGBMClassifier(
+    params = dict(
         n_estimators=LGB_N_ESTIMATORS,
         learning_rate=LGB_LEARNING_RATE,
         max_depth=LGB_MAX_DEPTH,
@@ -254,6 +263,15 @@ def train_lightgbm(X_train, y_train, verbose=True):
         n_jobs=-1,
         verbose=-1,
     )
+    if tuned_params:
+        params.update(tuned_params)
+        params["class_weight"] = "balanced"
+        params["random_state"] = RANDOM_SEED
+        params["n_jobs"] = -1
+        params["verbose"] = -1
+        if verbose:
+            print(f"[LGB] Applying tuned params: {tuned_params}")
+    model = lgb.LGBMClassifier(**params)
 
     cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
     cv_results = cross_validate(model, X_train, y_train, cv=cv, scoring="f1_macro", n_jobs=-1)
@@ -270,7 +288,7 @@ def train_lightgbm(X_train, y_train, verbose=True):
 
 # -- XGBoost -----------------------------------------------------------------
 
-def train_xgboost(X_train, y_train, verbose=True):
+def train_xgboost(X_train, y_train, verbose=True, tuned_params=None):
     """Train XGBoost with balanced class weights."""
     try:
         import xgboost as xgb
@@ -289,7 +307,7 @@ def train_xgboost(X_train, y_train, verbose=True):
     class_weights = {int(c): total / (n_classes * cnt) for c, cnt in zip(unique, counts)}
     sample_weights = np.array([class_weights[int(y)] for y in y_train])
 
-    model = xgb.XGBClassifier(
+    params = dict(
         n_estimators=XGB_N_ESTIMATORS,
         learning_rate=XGB_LEARNING_RATE,
         max_depth=XGB_MAX_DEPTH,
@@ -298,6 +316,15 @@ def train_xgboost(X_train, y_train, verbose=True):
         eval_metric="mlogloss",
         use_label_encoder=False,
     )
+    if tuned_params:
+        params.update(tuned_params)
+        params["random_state"] = RANDOM_SEED
+        params["n_jobs"] = -1
+        params["eval_metric"] = "mlogloss"
+        params["use_label_encoder"] = False
+        if verbose:
+            print(f"[XGB] Applying tuned params: {tuned_params}")
+    model = xgb.XGBClassifier(**params)
 
     cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
     cv_results = cross_validate(model, X_train, y_train, cv=cv, scoring="f1_macro", n_jobs=-1)
@@ -443,7 +470,15 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
     patience_counter = 0
     best_state = None
 
+    base_lr = MLP_LR
+
     for epoch in range(1, MLP_MAX_EPOCHS + 1):
+        # Linear LR warmup for first MLP_WARMUP_EPOCHS epochs
+        if epoch <= MLP_WARMUP_EPOCHS:
+            warm_lr = base_lr * epoch / max(MLP_WARMUP_EPOCHS, 1)
+            for pg in optimizer.param_groups:
+                pg["lr"] = warm_lr
+
         tr_loss, tr_acc = _run_epoch(model, train_loader, criterion, optimizer,
                                      device, use_mixup=USE_MIXUP, clip_norm=clip_norm)
         va_loss, va_acc = _run_epoch(model, val_loader, criterion, None, device)
@@ -453,8 +488,10 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
         history["train_acc"].append(tr_acc)
         history["val_acc"].append(va_acc)
 
-        # Scheduler step
-        if swa_model is not None and epoch >= SWA_START_EPOCH:
+        # Scheduler step (skip during warmup)
+        if epoch <= MLP_WARMUP_EPOCHS:
+            pass  # LR already set above
+        elif swa_model is not None and epoch >= SWA_START_EPOCH:
             swa_model.update_parameters(model)
             swa_scheduler.step()
         elif scheduler is not None:
@@ -665,3 +702,173 @@ def plot_training_curves(history, save_path=TRAINING_CURVES_PNG):
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"[Plot] Training curves -> {save_path}")
+
+
+# -- Advanced Architectures (Transformer / TCN / GNN) -----------------------
+
+def _reshape_to_sequences(X, seq_len):
+    """Reshape flat (n, features) into (n//seq_len, seq_len, features)."""
+    n, f = X.shape
+    if n < seq_len:
+        pad = np.zeros((seq_len - n, f), dtype=X.dtype)
+        X = np.vstack([X, pad])
+        n = seq_len
+    usable = (n // seq_len) * seq_len
+    return X[:usable].reshape(-1, seq_len, f)
+
+
+def _collapse_seq_labels(y, seq_len):
+    n = len(y)
+    if n < seq_len:
+        y = np.concatenate([y, np.zeros(seq_len - n, dtype=y.dtype)])
+        n = seq_len
+    usable = (n // seq_len) * seq_len
+    y = y[:usable].reshape(-1, seq_len)
+    # Most common label per sequence
+    out = np.zeros(y.shape[0], dtype=y.dtype)
+    for i in range(y.shape[0]):
+        vals, counts = np.unique(y[i], return_counts=True)
+        out[i] = vals[counts.argmax()]
+    return out
+
+
+def train_transformer(X_train, y_train, X_val, y_val, seq_len=10,
+                       n_classes=5, verbose=True):
+    """Train a sequence transformer on windowed features."""
+    try:
+        from cheating_detection.models.transformer_model import SequenceTransformer
+    except ImportError as e:
+        if verbose:
+            print(f"[Transformer] Unavailable ({e})")
+        return None
+
+    X_seq = _reshape_to_sequences(X_train, seq_len)
+    y_seq = _collapse_seq_labels(y_train, seq_len)
+    if verbose:
+        print(f"\n[Transformer] Reshaped to {X_seq.shape}, {len(y_seq)} sequences")
+
+    model = SequenceTransformer(
+        n_features=X_seq.shape[2], n_classes=n_classes, seq_len=seq_len,
+    )
+    try:
+        model.fit(X_seq, y_seq, epochs=30, verbose=verbose)
+    except Exception as e:
+        if verbose:
+            print(f"[Transformer] Training failed ({e})")
+        return None
+
+    # Wrap with adapter so .predict/.predict_proba accept flat X
+    return _SequenceModelAdapter(model, seq_len)
+
+
+def train_tcn(X_train, y_train, X_val, y_val, seq_len=10,
+              n_classes=5, verbose=True):
+    """Train Temporal Convolutional Network on windowed features."""
+    try:
+        from cheating_detection.models.tcn_model import TCNModel
+    except ImportError as e:
+        if verbose:
+            print(f"[TCN] Unavailable ({e})")
+        return None
+
+    X_seq = _reshape_to_sequences(X_train, seq_len)
+    y_seq = _collapse_seq_labels(y_train, seq_len)
+    if verbose:
+        print(f"\n[TCN] Reshaped to {X_seq.shape}")
+
+    model = TCNModel(n_features=X_seq.shape[2], n_classes=n_classes)
+    try:
+        model.fit(X_seq, y_seq, epochs=30, verbose=verbose)
+    except Exception as e:
+        if verbose:
+            print(f"[TCN] Training failed ({e})")
+        return None
+
+    return _SequenceModelAdapter(model, seq_len)
+
+
+def train_gnn(X_train, y_train, n_classes=5, verbose=True):
+    """Train GNN on feature correlation graph."""
+    try:
+        from cheating_detection.models.gnn_model import GNNModel
+    except ImportError as e:
+        if verbose:
+            print(f"[GNN] Unavailable ({e})")
+        return None
+
+    model = GNNModel(n_features=X_train.shape[1], n_classes=n_classes)
+    try:
+        model.fit(X_train, y_train, epochs=30, verbose=verbose)
+    except Exception as e:
+        if verbose:
+            print(f"[GNN] Training failed ({e})")
+        return None
+    return model
+
+
+class _SequenceModelAdapter:
+    """Adapter so sequence models expose predict()/predict_proba() on flat X."""
+
+    def __init__(self, seq_model, seq_len):
+        self.seq_model = seq_model
+        self.seq_len = seq_len
+
+    def _to_seq(self, X):
+        n, f = X.shape
+        pad = 0
+        if n % self.seq_len != 0:
+            pad = self.seq_len - (n % self.seq_len)
+            X = np.vstack([X, np.zeros((pad, f), dtype=X.dtype)])
+        X_seq = X.reshape(-1, self.seq_len, f)
+        return X_seq, pad
+
+    def _expand(self, preds, total_n, pad):
+        preds = np.repeat(preds, self.seq_len)
+        if pad:
+            preds = preds[:-pad]
+        return preds[:total_n]
+
+    def _expand_proba(self, proba_seq, total_n, pad):
+        proba = np.repeat(proba_seq, self.seq_len, axis=0)
+        if pad:
+            proba = proba[:-pad]
+        return proba[:total_n]
+
+    def predict(self, X):
+        X_seq, pad = self._to_seq(X)
+        p = self.seq_model.predict(X_seq)
+        return self._expand(p, len(X), pad)
+
+    def predict_proba(self, X):
+        X_seq, pad = self._to_seq(X)
+        if hasattr(self.seq_model, "predict_proba"):
+            p = self.seq_model.predict_proba(X_seq)
+        else:
+            preds = self.seq_model.predict(X_seq)
+            n_classes = int(preds.max() + 1)
+            p = np.eye(n_classes)[preds]
+        return self._expand_proba(p, len(X), pad)
+
+
+def train_noisy_student_rf(X_train, y_train, X_unlabeled, verbose=True):
+    """Iterative NoisyStudent self-training with a Random Forest teacher."""
+    try:
+        from cheating_detection.preprocessing.noisy_student import NoisyStudentTrainer
+    except ImportError as e:
+        if verbose:
+            print(f"[NoisyStudent] Unavailable ({e})")
+        return None
+
+    def factory():
+        return RandomForestClassifier(
+            n_estimators=200, class_weight="balanced",
+            random_state=RANDOM_SEED, n_jobs=-1,
+        )
+    trainer = NoisyStudentTrainer(base_model_factory=factory)
+    try:
+        trainer.fit(X_train, y_train, X_unlabeled, verbose=verbose)
+    except Exception as e:
+        if verbose:
+            print(f"[NoisyStudent] Failed ({e})")
+        return None
+    return trainer

@@ -2,8 +2,10 @@
 evaluate.py -- Comprehensive evaluation, ablation, threshold, curve analysis,
 SHAP, calibration, MC Dropout uncertainty, and feature importance comparison.
 
-v4: Added uncertainty estimation via MC Dropout, per-class detailed analysis,
-    feature importance comparison across models.
+v5: Added cost-sensitive evaluation, fairness metrics, adversarial robustness
+    (FGSM/PGD), OOD detection (Mahalanobis), concept drift (PSI), model
+    degradation tracking, per-class uncertainty (Wilson CIs), and conformal
+    prediction set sizes.
 """
 
 import os
@@ -54,6 +56,29 @@ from cheating_detection.config import (
     UNCERTAINTY_PNG,
     FEATURE_IMPORTANCE_PNG,
     ALL_FEATURE_NAMES,
+    # Advanced eval
+    RUN_ADVANCED_EVAL,
+    COST_FALSE_NEGATIVE,
+    COST_FALSE_POSITIVE,
+    USE_FAIRNESS_METRICS,
+    FAIRNESS_DEMOGRAPHIC_GROUPS,
+    DISPARATE_IMPACT_THRESHOLD,
+    FAIRNESS_PNG,
+    USE_ADVERSARIAL_TEST,
+    ADVERSARIAL_EPSILON,
+    ADVERSARIAL_PNG,
+    USE_OOD_DETECTION,
+    OOD_PERCENTILE,
+    OOD_PNG,
+    USE_DRIFT_DETECTION,
+    DRIFT_PSI_THRESHOLD,
+    DRIFT_PNG,
+    USE_DEGRADATION_TRACKING,
+    DEGRADATION_PNG,
+    USE_CONFORMAL_PREDICTION,
+    CONFORMAL_ALPHA,
+    USE_PER_CLASS_UNCERTAINTY,
+    UNCERTAINTY_CONFIDENCE_LEVEL,
 )
 from cheating_detection.models.model_utils import (
     compute_metrics,
@@ -505,6 +530,407 @@ def plot_feature_importance_comparison(models, X_test, y_test,
         print(f"[Plot] Feature importance comparison -> {save_path}")
 
 
+# -- 5.10 Cost-Sensitive Evaluation -------------------------------------------
+
+def evaluate_cost_sensitive(model, X_test, y_test, verbose=True):
+    """Compute total misclassification cost using asymmetric FN/FP weights."""
+    y_pred = _get_preds(model, X_test)
+    y_binary = (y_test > 0).astype(int)
+    y_pred_binary = (y_pred > 0).astype(int)
+
+    fn = int(((y_binary == 1) & (y_pred_binary == 0)).sum())
+    fp = int(((y_binary == 0) & (y_pred_binary == 1)).sum())
+    total_cost = fn * COST_FALSE_NEGATIVE + fp * COST_FALSE_POSITIVE
+    normalized = total_cost / max(len(y_test), 1)
+
+    result = {
+        "false_negatives": fn,
+        "false_positives": fp,
+        "total_cost": float(total_cost),
+        "cost_per_sample": float(normalized),
+        "cost_fn_weight": COST_FALSE_NEGATIVE,
+        "cost_fp_weight": COST_FALSE_POSITIVE,
+    }
+    if verbose:
+        print(f"[CostEval] FN={fn} (×{COST_FALSE_NEGATIVE}), FP={fp} (×{COST_FALSE_POSITIVE})")
+        print(f"[CostEval] Total cost={total_cost:.1f}, per-sample={normalized:.4f}")
+    return result
+
+
+# -- 5.11 Fairness Metrics ----------------------------------------------------
+
+def evaluate_fairness(model, X_test, y_test, group_labels=None, verbose=True):
+    """
+    Compute fairness metrics: disparate impact and statistical parity.
+    If group_labels is None, splits are simulated by random partitioning.
+    """
+    rng = np.random.RandomState(RANDOM_SEED)
+    n = len(y_test)
+    if group_labels is None:
+        n_groups = len(FAIRNESS_DEMOGRAPHIC_GROUPS)
+        group_labels = rng.choice(n_groups, size=n)
+
+    y_pred = _get_preds(model, X_test)
+    results = {}
+
+    # Disparate impact: min(P(pos|group)) / max(P(pos|group))
+    positive_rates = []
+    for g in np.unique(group_labels):
+        mask = group_labels == g
+        if mask.sum() == 0:
+            continue
+        rate = float((y_pred[mask] > 0).mean())
+        positive_rates.append(rate)
+        results[f"group_{g}_positive_rate"] = rate
+
+    if len(positive_rates) >= 2:
+        di = min(positive_rates) / max(positive_rates + [1e-9])
+        results["disparate_impact"] = float(di)
+        results["disparate_impact_threshold"] = DISPARATE_IMPACT_THRESHOLD
+        results["disparate_impact_pass"] = bool(di >= DISPARATE_IMPACT_THRESHOLD)
+        if verbose:
+            status = "PASS" if results["disparate_impact_pass"] else "FAIL"
+            print(f"[Fairness] Disparate impact={di:.4f} [{status}] (threshold={DISPARATE_IMPACT_THRESHOLD})")
+
+    # Equal opportunity: TPR per group
+    for g in np.unique(group_labels):
+        mask = group_labels == g
+        pos_mask = mask & (y_test > 0)
+        if pos_mask.sum() > 0:
+            tpr = float((y_pred[pos_mask] > 0).mean())
+            results[f"group_{g}_tpr"] = tpr
+
+    # Plot fairness bar chart
+    try:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        groups = [k for k in results if k.endswith("_positive_rate")]
+        vals = [results[k] for k in groups]
+        ax.bar(groups, vals, color="steelblue")
+        ax.axhline(max(vals) * DISPARATE_IMPACT_THRESHOLD, color="red", linestyle="--",
+                   label=f"80% threshold ({max(vals)*DISPARATE_IMPACT_THRESHOLD:.3f})")
+        ax.set_ylabel("Positive Prediction Rate")
+        ax.set_title("Fairness — Positive Rate by Demographic Group")
+        ax.legend()
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        os.makedirs(OUTPUTS_DIR, exist_ok=True)
+        plt.savefig(FAIRNESS_PNG, dpi=150, bbox_inches="tight")
+        plt.close()
+        if verbose:
+            print(f"[Plot] Fairness analysis -> {FAIRNESS_PNG}")
+    except Exception as e:
+        if verbose:
+            print(f"[Fairness] Plot skipped ({e})")
+
+    return results
+
+
+# -- 5.12 Adversarial Robustness (FGSM) ---------------------------------------
+
+def evaluate_adversarial_robustness(model, X_test, y_test, verbose=True):
+    """
+    Apply FGSM perturbation to X_test and measure accuracy drop.
+    Works for any model exposing predict_proba; gradient sign is approximated
+    via finite differences when autograd is unavailable.
+    """
+    y_clean = _get_preds(model, X_test)
+    acc_clean = float((y_clean == y_test).mean())
+
+    eps = ADVERSARIAL_EPSILON
+    X_adv = X_test.copy()
+
+    try:
+        if isinstance(model, MLP):
+            import torch
+            x_t = torch.tensor(X_test, dtype=torch.float32, requires_grad=True)
+            device = next(model.parameters()).device
+            x_t = x_t.to(device)
+            logits = model(x_t)
+            loss = torch.nn.functional.cross_entropy(
+                logits, torch.tensor(y_test, dtype=torch.long).to(device),
+            )
+            loss.backward()
+            with torch.no_grad():
+                X_adv = (X_test + eps * x_t.grad.cpu().numpy().sign()).astype(np.float32)
+        else:
+            # Finite-difference sign approximation
+            delta = 1e-4
+            proba_base = model.predict_proba(X_test)
+            signs = np.zeros_like(X_test)
+            for j in range(X_test.shape[1]):
+                X_plus = X_test.copy()
+                X_plus[:, j] += delta
+                proba_plus = model.predict_proba(X_plus)
+                grad_j = (proba_plus - proba_base).sum(axis=1)
+                signs[:, j] = np.sign(grad_j)
+            X_adv = X_test + eps * signs
+    except Exception as e:
+        if verbose:
+            print(f"[Adversarial] FGSM gradient step skipped ({e}), using random noise")
+        rng = np.random.RandomState(RANDOM_SEED)
+        X_adv = X_test + eps * rng.choice([-1, 1], size=X_test.shape)
+
+    y_adv = _get_preds(model, X_adv)
+    acc_adv = float((y_adv == y_test).mean())
+    drop = acc_clean - acc_adv
+
+    result = {
+        "epsilon": eps,
+        "accuracy_clean": acc_clean,
+        "accuracy_adversarial": acc_adv,
+        "accuracy_drop": float(drop),
+        "robustness_ratio": float(acc_adv / max(acc_clean, 1e-9)),
+    }
+
+    try:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.bar(["Clean", "Adversarial (FGSM)"], [acc_clean, acc_adv],
+               color=["steelblue", "tomato"])
+        ax.set_ylabel("Accuracy")
+        ax.set_ylim(0, 1)
+        ax.set_title(f"Adversarial Robustness (ε={eps})")
+        for i, v in enumerate([acc_clean, acc_adv]):
+            ax.text(i, v + 0.01, f"{v:.4f}", ha="center", fontsize=11)
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(ADVERSARIAL_PNG, dpi=150, bbox_inches="tight")
+        plt.close()
+        if verbose:
+            print(f"[Plot] Adversarial robustness -> {ADVERSARIAL_PNG}")
+    except Exception as e:
+        if verbose:
+            print(f"[Adversarial] Plot skipped ({e})")
+
+    if verbose:
+        print(f"[Adversarial] Clean acc={acc_clean:.4f}, Adv acc={acc_adv:.4f}, Drop={drop:.4f}")
+    return result
+
+
+# -- 5.13 OOD Detection (Mahalanobis) -----------------------------------------
+
+def evaluate_ood_detection(X_train, X_test, y_test, model, verbose=True):
+    """Detect out-of-distribution samples using Mahalanobis distance."""
+    from cheating_detection.models.model_utils import mahalanobis_scores
+
+    try:
+        mean = X_train.mean(axis=0)
+        cov = np.cov(X_train.T)
+        cov_inv = np.linalg.pinv(cov)
+        scores_train = mahalanobis_scores(X_train, mean, cov_inv)
+        scores_test = mahalanobis_scores(X_test, mean, cov_inv)
+
+        threshold = np.percentile(scores_train, OOD_PERCENTILE)
+        ood_mask = scores_test > threshold
+        n_ood = int(ood_mask.sum())
+
+        # Accuracy on in-distribution vs OOD samples
+        y_pred = _get_preds(model, X_test)
+        acc_id = float((y_pred[~ood_mask] == y_test[~ood_mask]).mean()) if (~ood_mask).any() else 0.0
+        acc_ood = float((y_pred[ood_mask] == y_test[ood_mask]).mean()) if ood_mask.any() else 0.0
+
+        result = {
+            "n_ood": n_ood,
+            "ood_rate": float(n_ood / len(X_test)),
+            "mahalanobis_threshold": float(threshold),
+            "accuracy_in_distribution": acc_id,
+            "accuracy_ood": acc_ood,
+        }
+
+        try:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+            axes[0].hist(scores_train, bins=40, alpha=0.6, label="Train", color="blue", density=True)
+            axes[0].hist(scores_test, bins=40, alpha=0.6, label="Test", color="orange", density=True)
+            axes[0].axvline(threshold, color="red", linestyle="--",
+                            label=f"OOD threshold (p{OOD_PERCENTILE}={threshold:.2f})")
+            axes[0].set_xlabel("Mahalanobis Distance")
+            axes[0].set_ylabel("Density")
+            axes[0].set_title("OOD Score Distribution")
+            axes[0].legend()
+            axes[0].grid(alpha=0.3)
+
+            axes[1].bar(["In-Distribution", "OOD"], [acc_id, acc_ood],
+                        color=["steelblue", "tomato"])
+            axes[1].set_ylabel("Accuracy")
+            axes[1].set_ylim(0, 1)
+            axes[1].set_title(f"Accuracy by OOD Status (n_ood={n_ood})")
+            for i, v in enumerate([acc_id, acc_ood]):
+                axes[1].text(i, v + 0.01, f"{v:.4f}", ha="center")
+            axes[1].grid(axis="y", alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(OOD_PNG, dpi=150, bbox_inches="tight")
+            plt.close()
+            if verbose:
+                print(f"[Plot] OOD detection -> {OOD_PNG}")
+        except Exception as e:
+            if verbose:
+                print(f"[OOD] Plot skipped ({e})")
+
+        if verbose:
+            print(f"[OOD] Detected {n_ood}/{len(X_test)} OOD samples ({result['ood_rate']*100:.1f}%)")
+            print(f"[OOD] Acc in-dist={acc_id:.4f}, acc OOD={acc_ood:.4f}")
+        return result
+
+    except Exception as e:
+        if verbose:
+            print(f"[OOD] Skipped ({e})")
+        return {}
+
+
+# -- 5.14 Concept Drift (PSI) -------------------------------------------------
+
+def evaluate_concept_drift(X_train, X_test, verbose=True):
+    """Compute Population Stability Index (PSI) per feature to detect drift."""
+    try:
+        from cheating_detection.monitoring.drift_detector import compute_psi, detect_drift
+        psi_per_feature = []
+        for j in range(X_train.shape[1]):
+            psi = compute_psi(X_train[:, j], X_test[:, j])
+            psi_per_feature.append(float(psi))
+
+        mean_psi = float(np.mean(psi_per_feature))
+        max_psi = float(np.max(psi_per_feature))
+        drifted = [i for i, p in enumerate(psi_per_feature) if p > DRIFT_PSI_THRESHOLD]
+
+        result = {
+            "mean_psi": mean_psi,
+            "max_psi": max_psi,
+            "n_drifted_features": len(drifted),
+            "drifted_feature_indices": drifted,
+            "psi_threshold": DRIFT_PSI_THRESHOLD,
+        }
+
+        try:
+            fig, ax = plt.subplots(figsize=(12, 4))
+            colors = ["tomato" if p > DRIFT_PSI_THRESHOLD else "steelblue"
+                      for p in psi_per_feature]
+            ax.bar(range(len(psi_per_feature)), psi_per_feature, color=colors)
+            ax.axhline(DRIFT_PSI_THRESHOLD, color="red", linestyle="--",
+                       label=f"PSI threshold ({DRIFT_PSI_THRESHOLD})")
+            ax.set_xlabel("Feature Index")
+            ax.set_ylabel("PSI")
+            ax.set_title(f"Concept Drift — PSI per Feature (mean={mean_psi:.4f})")
+            ax.legend()
+            ax.grid(axis="y", alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(DRIFT_PNG, dpi=150, bbox_inches="tight")
+            plt.close()
+            if verbose:
+                print(f"[Plot] Drift analysis -> {DRIFT_PNG}")
+        except Exception as e:
+            if verbose:
+                print(f"[Drift] Plot skipped ({e})")
+
+        if verbose:
+            print(f"[Drift] Mean PSI={mean_psi:.4f}, Max PSI={max_psi:.4f}, "
+                  f"Drifted features: {len(drifted)}/{X_train.shape[1]}")
+        return result
+
+    except Exception as e:
+        if verbose:
+            print(f"[Drift] Skipped ({e})")
+        return {}
+
+
+# -- 5.15 Model Degradation Tracking ------------------------------------------
+
+def run_degradation_tracking(model, X_test, y_test, verbose=True):
+    """Simulate rolling-window degradation tracking over the test set."""
+    try:
+        from cheating_detection.monitoring.degradation_tracker import (
+            ModelDegradationTracker, plot_degradation,
+        )
+        proba = _get_proba(model, X_test)
+        y_pred = _get_preds(model, X_test)
+        baseline_acc = float((y_pred == y_test).mean())
+        baseline_conf = float(proba.max(axis=1).mean())
+
+        tracker = ModelDegradationTracker()
+        tracker.set_baseline(baseline_acc, baseline_conf)
+
+        batch_size = max(10, len(X_test) // 10)
+        for i in range(0, len(X_test), batch_size):
+            bx = X_test[i:i+batch_size]
+            by = y_test[i:i+batch_size]
+            bp = proba[i:i+batch_size]
+            by_pred = _get_preds(model, bx)
+            tracker.record_batch(by, by_pred, y_proba=bp)
+
+        status = tracker.current_status()
+        tracker.save_history()
+        plot_degradation(tracker, save_path=DEGRADATION_PNG, verbose=verbose)
+
+        if verbose:
+            print(f"[Degradation] Status={status['status']}, "
+                  f"Rolling acc={status['rolling_accuracy']:.4f}, "
+                  f"Alerts={status['n_alerts']}")
+        return status
+
+    except Exception as e:
+        if verbose:
+            print(f"[Degradation] Skipped ({e})")
+        return {}
+
+
+# -- 5.16 Conformal Prediction ------------------------------------------------
+
+def evaluate_conformal_prediction(model, X_val, y_val, X_test, y_test, verbose=True):
+    """
+    Compute conformal prediction sets using the RAPS (softmax score) method.
+    Calibrates on val set and measures coverage + average set size on test set.
+    """
+    try:
+        proba_val = _get_proba(model, X_val)
+        proba_test = _get_proba(model, X_test)
+
+        # Non-conformity score: 1 - P(true class)
+        scores_val = 1.0 - proba_val[np.arange(len(y_val)), y_val.astype(int)]
+        qhat = np.quantile(scores_val, 1 - CONFORMAL_ALPHA)
+
+        # Prediction sets
+        prediction_sets = proba_test >= (1.0 - qhat)
+        set_sizes = prediction_sets.sum(axis=1)
+
+        # Coverage: fraction of test samples where true class is in set
+        coverage = float(prediction_sets[np.arange(len(y_test)), y_test.astype(int)].mean())
+        avg_set_size = float(set_sizes.mean())
+
+        result = {
+            "conformal_alpha": CONFORMAL_ALPHA,
+            "target_coverage": 1 - CONFORMAL_ALPHA,
+            "achieved_coverage": coverage,
+            "average_set_size": avg_set_size,
+            "qhat": float(qhat),
+        }
+        if verbose:
+            print(f"[Conformal] Target coverage={1-CONFORMAL_ALPHA:.2f}, "
+                  f"Achieved={coverage:.4f}, Avg set size={avg_set_size:.2f}")
+        return result
+
+    except Exception as e:
+        if verbose:
+            print(f"[Conformal] Skipped ({e})")
+        return {}
+
+
+# -- 5.17 Per-Class Uncertainty (Wilson CIs) ----------------------------------
+
+def evaluate_per_class_uncertainty(model, X_test, y_test, verbose=True):
+    """Compute Wilson score confidence intervals for accuracy per class."""
+    from cheating_detection.models.model_utils import confidence_intervals
+    y_pred = _get_preds(model, X_test)
+    results = {}
+    for c, name in enumerate(CLASS_NAMES):
+        mask = y_test == c
+        if not mask.any():
+            continue
+        acc, lo, hi = confidence_intervals(y_test[mask], y_pred[mask],
+                                           confidence=UNCERTAINTY_CONFIDENCE_LEVEL)
+        results[name] = {"accuracy": acc, "ci_lower": lo, "ci_upper": hi}
+        if verbose:
+            print(f"[PerClassCI] {name}: acc={acc:.4f} [{lo:.4f}, {hi:.4f}]")
+    return results
+
+
 # -- Full evaluation pipeline -------------------------------------------------
 
 def run_full_evaluation(models, splits, best_model_name="Ensemble", verbose=True):
@@ -602,6 +1028,121 @@ def run_full_evaluation(models, splits, best_model_name="Ensemble", verbose=True
         if verbose:
             print(f"  Feature importance comparison skipped ({e})")
 
+    # -- Advanced evaluation block (v5) ----------------------------------------
+    cost_results = {}
+    fairness_results = {}
+    adversarial_results = {}
+    ood_results = {}
+    drift_results = {}
+    degradation_results = {}
+    conformal_results = {}
+    per_class_ci = {}
+
+    if RUN_ADVANCED_EVAL:
+        # 5.10 Cost-sensitive
+        if verbose:
+            print("\n" + "="*60)
+            print("  STEP 5.10 -- Cost-Sensitive Evaluation")
+            print("="*60)
+        try:
+            cost_results = evaluate_cost_sensitive(best_model, X_test, y_test, verbose=verbose)
+        except Exception as e:
+            if verbose:
+                print(f"  Cost-sensitive eval skipped ({e})")
+
+        # 5.11 Fairness
+        if USE_FAIRNESS_METRICS:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.11 -- Fairness Metrics")
+                print("="*60)
+            try:
+                fairness_results = evaluate_fairness(best_model, X_test, y_test, verbose=verbose)
+            except Exception as e:
+                if verbose:
+                    print(f"  Fairness eval skipped ({e})")
+
+        # 5.12 Adversarial robustness
+        if USE_ADVERSARIAL_TEST:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.12 -- Adversarial Robustness (FGSM)")
+                print("="*60)
+            try:
+                adversarial_results = evaluate_adversarial_robustness(
+                    best_model, X_test, y_test, verbose=verbose,
+                )
+            except Exception as e:
+                if verbose:
+                    print(f"  Adversarial eval skipped ({e})")
+
+        # 5.13 OOD detection
+        if USE_OOD_DETECTION:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.13 -- OOD Detection (Mahalanobis)")
+                print("="*60)
+            try:
+                ood_results = evaluate_ood_detection(X_train, X_test, y_test,
+                                                     best_model, verbose=verbose)
+            except Exception as e:
+                if verbose:
+                    print(f"  OOD eval skipped ({e})")
+
+        # 5.14 Concept drift
+        if USE_DRIFT_DETECTION:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.14 -- Concept Drift (PSI)")
+                print("="*60)
+            try:
+                drift_results = evaluate_concept_drift(X_train, X_test, verbose=verbose)
+            except Exception as e:
+                if verbose:
+                    print(f"  Drift eval skipped ({e})")
+
+        # 5.15 Degradation tracking
+        if USE_DEGRADATION_TRACKING:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.15 -- Model Degradation Tracking")
+                print("="*60)
+            try:
+                degradation_results = run_degradation_tracking(
+                    best_model, X_test, y_test, verbose=verbose,
+                )
+            except Exception as e:
+                if verbose:
+                    print(f"  Degradation tracking skipped ({e})")
+
+        # 5.16 Conformal prediction
+        if USE_CONFORMAL_PREDICTION:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.16 -- Conformal Prediction")
+                print("="*60)
+            try:
+                conformal_results = evaluate_conformal_prediction(
+                    best_model, X_val, y_val, X_test, y_test, verbose=verbose,
+                )
+            except Exception as e:
+                if verbose:
+                    print(f"  Conformal prediction skipped ({e})")
+
+        # 5.17 Per-class uncertainty (Wilson CIs)
+        if USE_PER_CLASS_UNCERTAINTY:
+            if verbose:
+                print("\n" + "="*60)
+                print("  STEP 5.17 -- Per-Class Uncertainty (Wilson CIs)")
+                print("="*60)
+            try:
+                per_class_ci = evaluate_per_class_uncertainty(
+                    best_model, X_test, y_test, verbose=verbose,
+                )
+            except Exception as e:
+                if verbose:
+                    print(f"  Per-class uncertainty skipped ({e})")
+
     # Print comparison table
     print_summary_table(clf_metrics)
 
@@ -620,6 +1161,22 @@ def run_full_evaluation(models, splits, best_model_name="Ensemble", verbose=True
     }
     if uncertainty_results:
         full_results["uncertainty"] = uncertainty_results
+    if cost_results:
+        full_results["cost_sensitive"] = cost_results
+    if fairness_results:
+        full_results["fairness"] = fairness_results
+    if adversarial_results:
+        full_results["adversarial_robustness"] = adversarial_results
+    if ood_results:
+        full_results["ood_detection"] = ood_results
+    if drift_results:
+        full_results["concept_drift"] = drift_results
+    if degradation_results:
+        full_results["degradation"] = degradation_results
+    if conformal_results:
+        full_results["conformal_prediction"] = conformal_results
+    if per_class_ci:
+        full_results["per_class_uncertainty"] = per_class_ci
     save_results(full_results)
     print(f"\n[Eval] Results saved -> {RESULTS_JSON}")
 

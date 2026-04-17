@@ -180,6 +180,62 @@ def save_results(results: dict, path: str = RESULTS_JSON) -> None:
         json.dump(existing, f, indent=2)
 
 
+# ── Confidence calibration / uncertainty helpers ────────────────────────────
+
+def temperature_scale_logits(logits: np.ndarray, temperature: float) -> np.ndarray:
+    """Apply temperature scaling to raw logits and return softmax probabilities."""
+    scaled = logits / max(temperature, 1e-6)
+    exp = np.exp(scaled - scaled.max(axis=1, keepdims=True))
+    return exp / exp.sum(axis=1, keepdims=True)
+
+
+def predictive_entropy(proba: np.ndarray) -> np.ndarray:
+    """Per-sample predictive entropy of class probabilities."""
+    eps = 1e-12
+    return -np.sum(proba * np.log(proba + eps), axis=1)
+
+
+def confidence_intervals(y_true, y_pred, confidence=0.95):
+    """Wilson score interval for overall accuracy."""
+    from scipy.stats import norm
+    n = len(y_true)
+    if n == 0:
+        return 0.0, 0.0, 0.0
+    correct = int((y_true == y_pred).sum())
+    acc = correct / n
+    z = norm.ppf(1 - (1 - confidence) / 2)
+    denom = 1 + z ** 2 / n
+    center = (acc + z ** 2 / (2 * n)) / denom
+    half = z * np.sqrt(acc * (1 - acc) / n + z ** 2 / (4 * n ** 2)) / denom
+    return float(acc), float(max(0.0, center - half)), float(min(1.0, center + half))
+
+
+# ── OOD / cascade helpers ───────────────────────────────────────────────────
+
+def mahalanobis_scores(X: np.ndarray, mean: np.ndarray, cov_inv: np.ndarray) -> np.ndarray:
+    diff = X - mean
+    return np.sqrt(np.einsum("ij,jk,ik->i", diff, cov_inv, diff))
+
+
+def cascade_predict(primary, secondary, X, threshold: float = 0.85):
+    """Route low-confidence samples from primary to secondary model."""
+    p1 = primary.predict_proba(X)
+    conf = p1.max(axis=1)
+    preds = p1.argmax(axis=1)
+    low = conf < threshold
+    if low.any() and secondary is not None:
+        preds[low] = secondary.predict(X[low])
+    return preds, conf, low
+
+
+def batch_predict(model, X, batch_size: int = 512) -> np.ndarray:
+    """Memory-safe batched prediction for any model exposing .predict()."""
+    out = []
+    for i in range(0, len(X), batch_size):
+        out.append(model.predict(X[i:i + batch_size]))
+    return np.concatenate(out) if out else np.array([])
+
+
 # ── Formatted summary table ───────────────────────────────────────────────────
 
 def print_summary_table(results: dict) -> None:

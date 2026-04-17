@@ -130,8 +130,9 @@ GRADIENT_CLIP_NORM = 1.0
 
 # -- Stochastic Weight Averaging (SWA) --------------------------------------
 USE_SWA = True
-SWA_START_EPOCH = 100   # start averaging after this epoch
+SWA_START_EPOCH = 75    # start averaging earlier (was 100; half of 150 max epochs)
 SWA_LR = 0.0005         # fixed LR for SWA phase
+MLP_WARMUP_EPOCHS = 5   # linear LR warmup for first N epochs
 
 # -- MC Dropout (uncertainty estimation) -------------------------------------
 USE_MC_DROPOUT = True
@@ -172,6 +173,16 @@ USE_SHAP = True
 # -- Optuna ------------------------------------------------------------------
 OPTUNA_N_TRIALS = 50
 OPTUNA_TIMEOUT = 600   # seconds
+APPLY_OPTUNA_RESULTS = True   # use Optuna best params to override defaults
+
+# -- Pipeline integration toggles -------------------------------------------
+USE_ADVANCED_PIPELINE = True   # master switch for advanced model training
+TRAIN_TRANSFORMER_IN_PIPELINE = True
+TRAIN_TCN_IN_PIPELINE = True
+TRAIN_GNN_IN_PIPELINE = True
+USE_CASCADE_IN_PIPELINE = True
+RUN_ADVANCED_EVAL = True       # cost/fairness/adversarial/OOD/drift
+PIPELINE_SEQ_LEN = 10          # sequence length for Transformer/TCN
 
 # -- Temperature Scaling (post-hoc calibration) ------------------------------
 USE_TEMPERATURE_SCALING = True
