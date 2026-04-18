@@ -14,3 +14,6 @@ datasets/mouse/Mouse-Dynamics-Challenge/training_files/
 datasets/mouse/Mouse-Dynamics-Challenge/test_files/
 datasets/face/
 datasets/mouse/
+
+# Obsidian import staging bundle (local only — copy to vault, don't commit)
+obsidian_import/
