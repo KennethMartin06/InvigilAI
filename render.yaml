@@ -1,0 +1,57 @@
+# Render.com deployment manifest.
+# To deploy:
+#   1. Push this repo to GitHub
+#   2. Go to https://dashboard.render.com/blueprints
+#   3. Connect this repo; Render auto-detects render.yaml and creates all services
+#
+# Free tier gives: PostgreSQL + backend web service + static frontend site.
+
+databases:
+  - name: invigilai-db
+    databaseName: invigilai
+    user: invigilai
+    plan: free
+
+services:
+  # ── Backend: FastAPI + ensemble ──────────────────────────────────────────────
+  - type: web
+    name: invigilai-backend
+    runtime: docker
+    dockerfilePath: ./proctoring_app/backend/Dockerfile
+    dockerContext: .
+    plan: starter           # 512 MB RAM — upgrade for heavier loads
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: invigilai-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRY_HOURS
+        value: 24
+      - key: MODEL_PATH
+        value: /app/cheating_detection/models/mlp_model.pth
+      - key: SCALER_PATH
+        value: /app/cheating_detection/models/scaler.joblib
+      - key: CHEATING_THRESHOLD
+        value: "0.70"
+      - key: CORS_ORIGINS
+        value: https://invigilai-frontend.onrender.com
+      - key: UPLOAD_DIR
+        value: /app/proctoring_app/backend/uploads
+
+  # ── Frontend: React SPA via nginx ────────────────────────────────────────────
+  - type: web
+    name: invigilai-frontend
+    runtime: docker
+    dockerfilePath: ./proctoring_app/frontend/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: VITE_API_BASE
+        value: https://invigilai-backend.onrender.com/api
+      - key: VITE_WS_BASE
+        value: wss://invigilai-backend.onrender.com

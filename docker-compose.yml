@@ -1,0 +1,69 @@
+# InvigilAI — production-ready local stack.
+#
+# Usage:
+#   docker compose up --build
+# Then open: http://localhost
+#
+# Services:
+#   postgres  — Persistent DB (Postgres 16)
+#   backend   — FastAPI + ensemble inference (all models loaded)
+#   frontend  — React SPA served via nginx, proxies /api and /ws to backend
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: invigilai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-invigilai_dev_pw}
+      POSTGRES_DB: invigilai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invigilai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: proctoring_app/backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://invigilai:${POSTGRES_PASSWORD:-invigilai_dev_pw}@postgres:5432/invigilai
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRY_HOURS: 24
+      MODEL_PATH: /app/cheating_detection/models/mlp_model.pth
+      SCALER_PATH: /app/cheating_detection/models/scaler.joblib
+      CHEATING_THRESHOLD: ${CHEATING_THRESHOLD:-0.70}
+      CORS_ORIGINS: http://localhost,http://localhost:80,http://frontend
+      UPLOAD_DIR: /app/proctoring_app/backend/uploads
+    volumes:
+      - uploads:/app/proctoring_app/backend/uploads
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"   # Also exposed for direct testing
+
+  frontend:
+    build:
+      context: .
+      dockerfile: proctoring_app/frontend/Dockerfile
+      args:
+        VITE_API_BASE: /api
+        VITE_WS_BASE: ""
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  postgres_data:
+  uploads:

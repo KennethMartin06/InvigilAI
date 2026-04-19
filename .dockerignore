@@ -1,0 +1,41 @@
+# Exclude heavy / irrelevant files from the Docker build context
+.git
+.github
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Training artefacts not needed in production
+datasets/
+proctoring_app/frontend/node_modules/
+proctoring_app/frontend/dist/
+
+# Documentation / Obsidian import
+obsidian_import/
+docs/
+*.md
+!proctoring_app/backend/README.md
+
+# Local environment
+.env.local
+.env.development
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode
+.idea
+*.swp
+.DS_Store
+
+# Paper / figures (huge)
+*.docx
+*.pdf
+paper-figures/
+cheating_detection/outputs/

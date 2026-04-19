@@ -11,6 +11,7 @@ import numpy as np
 import logging
 
 from .inference import predict, get_model, get_scaler
+from .ensemble_inference import get_ensemble
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -132,14 +133,39 @@ def fuse_and_predict(visual: dict, behavioral: dict) -> dict:
         result["phone_confidence"]  = phone_confidence
         return result
 
-    # ── Normal MLP inference ──────────────────────────────────────────────────
+    # ── Ensemble inference (MLP + RF + SVM + LGB + XGB + ONNX) ──────────────
+    ensemble = get_ensemble()
+    if ensemble is not None and ensemble.get_status()["ensemble_size"] > 0:
+        try:
+            result = ensemble.predict(
+                feature_vec.squeeze(),
+                threshold=settings.cheating_threshold,
+            )
+        except Exception as exc:
+            logger.error("Ensemble inference failed: %s — falling back to MLP", exc)
+            result = _single_mlp_predict(feature_vec)
+    else:
+        # Fallback: legacy single-MLP inference
+        result = _single_mlp_predict(feature_vec)
+
+    result["feature_vector"]   = feature_vec.squeeze().tolist()
+    result["phone_detected"]   = False
+    result["phone_confidence"] = 0.0
+    return result
+
+
+def _single_mlp_predict(feature_vec: np.ndarray) -> dict:
+    """Legacy single-MLP prediction path (used as fallback)."""
     try:
         model = get_model()
         scaler = get_scaler()
-        result = predict(model, scaler, feature_vec.squeeze(), threshold=settings.cheating_threshold)
+        return predict(
+            model, scaler, feature_vec.squeeze(),
+            threshold=settings.cheating_threshold,
+        )
     except RuntimeError as exc:
-        logger.error("Inference failed: %s — returning default Normal prediction", exc)
-        result = {
+        logger.error("MLP inference failed: %s — returning Normal default", exc)
+        return {
             "predicted_class": 0,
             "class_name": "Normal",
             "cheating_probability": 0.0,
@@ -152,8 +178,3 @@ def fuse_and_predict(visual: dict, behavioral: dict) -> dict:
             },
             "is_cheating": False,
         }
-
-    result["feature_vector"]   = feature_vec.squeeze().tolist()
-    result["phone_detected"]   = False
-    result["phone_confidence"] = 0.0
-    return result
