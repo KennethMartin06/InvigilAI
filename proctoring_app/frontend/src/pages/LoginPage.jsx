@@ -1,11 +1,12 @@
 /** LoginPage — Student / Admin login form with error handling. */
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
   const { login, isAuthenticated, isAdmin } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState(null)
@@ -14,6 +15,26 @@ export default function LoginPage() {
   // Redirect if already logged in
   if (isAuthenticated) {
     navigate(isAdmin ? '/admin' : '/lobby', { replace: true })
+  }
+
+  // Auto-login when ?demo=1 is in the URL (used by portfolio link)
+  useEffect(() => {
+    if (searchParams.get('demo') === '1') {
+      handleDemoLogin()
+    }
+  }, [])
+
+  const handleDemoLogin = async () => {
+    setError(null)
+    setLoading(true)
+    try {
+      const data = await login('admin@proctor.ai', 'admin123')
+      navigate(data.role === 'admin' ? '/admin' : '/lobby', { replace: true })
+    } catch {
+      setError('Demo account not ready — try manual login below.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -47,6 +68,22 @@ export default function LoginPage() {
               {error}
             </div>
           )}
+
+          {/* One-click Demo for portfolio visitors */}
+          <button
+            type="button"
+            onClick={handleDemoLogin}
+            disabled={loading}
+            className="w-full mb-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-lg text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading ? 'Loading demo…' : '▶  Try Live Demo — Admin Dashboard'}
+          </button>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px bg-gray-200" />
+            <span className="text-xs text-gray-400">or sign in manually</span>
+            <div className="flex-1 h-px bg-gray-200" />
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

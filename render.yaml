@@ -42,6 +42,8 @@ services:
         value: https://invigilai-frontend.onrender.com
       - key: UPLOAD_DIR
         value: /app/proctoring_app/backend/uploads
+      - key: SEED_DEMO_DATA
+        value: "true"
 
   # ── Frontend: React SPA via nginx ────────────────────────────────────────────
   - type: web

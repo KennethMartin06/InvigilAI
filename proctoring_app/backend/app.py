@@ -69,6 +69,16 @@ async def lifespan(app: FastAPI):
     create_tables()
     logger.info("Database tables created/verified ✓")
 
+    # Seed demo accounts + sample data (only when SEED_DEMO_DATA=true)
+    if os.getenv("SEED_DEMO_DATA", "false").lower() == "true":
+        try:
+            from .seed_demo import seed
+            from .database import get_db
+            db = next(get_db())
+            seed(db)
+        except Exception as exc:
+            logger.warning("Demo seeding failed (non-fatal): %s", exc)
+
     # Ensure upload directories exist
     os.makedirs(os.path.join(settings.upload_dir, "screenshots"), exist_ok=True)
 
