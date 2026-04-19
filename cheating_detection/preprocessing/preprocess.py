@@ -320,8 +320,15 @@ def apply_noisy_student(X_train, y_train, X_unlabeled=None, verbose=True):
             noise = rng.normal(0, 0.05, size=(n_unlabeled, X_train.shape[1]))
             X_unlabeled = X_train[rng.choice(len(X_train), n_unlabeled, replace=True)] + noise
 
+        from sklearn.ensemble import RandomForestClassifier
+        def _factory():
+            return RandomForestClassifier(
+                n_estimators=100, class_weight="balanced",
+                random_state=RANDOM_SEED, n_jobs=-1,
+            )
         trainer = NoisyStudentTrainer(
-            n_iterations=NOISY_STUDENT_ITERATIONS,
+            base_model_factory=_factory,
+            iterations=NOISY_STUDENT_ITERATIONS,
             confidence_threshold=NOISY_STUDENT_CONFIDENCE_THRESHOLD,
         )
         X_train, y_train = trainer.fit(X_train, y_train, X_unlabeled, verbose=verbose)

@@ -216,18 +216,17 @@ def main():
     # -- Step 3g: Advanced Architectures (Transformer / TCN / GNN) ----------
     transformer_adapter = None
     tcn_adapter = None
-    gnn_adapter = None
+    gnn_model = None
 
     if USE_ADVANCED_PIPELINE:
         if TRAIN_TRANSFORMER_IN_PIPELINE:
             banner("STEP 3g -- Train Transformer Encoder")
             t0 = time.time()
             try:
-                transformer_model, _ = train_transformer(
+                transformer_adapter = train_transformer(
                     X_train, y_train, X_val, y_val,
                     seq_len=PIPELINE_SEQ_LEN, n_classes=len(np.unique(y_train)), verbose=True,
                 )
-                transformer_adapter = _SequenceModelAdapter(transformer_model, PIPELINE_SEQ_LEN)
                 print(f"  Done in {time.time() - t0:.1f}s")
             except Exception as e:
                 print(f"  Transformer skipped ({e})")
@@ -236,11 +235,10 @@ def main():
             banner("STEP 3h -- Train Temporal CNN (TCN)")
             t0 = time.time()
             try:
-                tcn_model, _ = train_tcn(
+                tcn_adapter = train_tcn(
                     X_train, y_train, X_val, y_val,
                     seq_len=PIPELINE_SEQ_LEN, n_classes=len(np.unique(y_train)), verbose=True,
                 )
-                tcn_adapter = _SequenceModelAdapter(tcn_model, PIPELINE_SEQ_LEN)
                 print(f"  Done in {time.time() - t0:.1f}s")
             except Exception as e:
                 print(f"  TCN skipped ({e})")
@@ -339,6 +337,8 @@ def main():
         models["Transformer"] = transformer_adapter
     if tcn_adapter is not None:
         models["TCN"] = tcn_adapter
+    if gnn_model is not None:
+        models["GNN"] = gnn_model
     if noisy_rf is not None:
         models["NoisyStudent-RF"] = noisy_rf
     run_full_evaluation(models, splits, best_model_name="Ensemble", verbose=True)
@@ -375,7 +375,7 @@ def main():
     print(f"    + LightGBM: 300 trees, balanced, depth=7 (Optuna-tuned)")
     print(f"    + XGBoost: 300 trees, depth=6 (Optuna-tuned)")
     print(f"    + MLP: [256,128,64] + Focal Loss + MixUp + CosineAnnealing + SWA")
-    print(f"    + LR warmup ({5} epochs) + Gradient clipping")
+    print(f"    + LR warmup ({MLP_WARMUP_EPOCHS} epochs) + Gradient clipping")
     print(f"    + Transformer Encoder (dim=128, heads=4, layers=3)")
     print(f"    + Temporal CNN (TCN, dilated causal convolutions)")
     print(f"    + Graph Neural Network (GCN, 3 layers)")

@@ -530,7 +530,6 @@ def train_mlp(X_train, y_train, X_val, y_val, input_dim=N_TOTAL_FEATURES,
             model.load_state_dict({
                 k.replace("module.", ""): v
                 for k, v in swa_model.state_dict().items()
-                if k.startswith("module.")
             })
             if verbose:
                 print("[MLP] Applied SWA weight averaging")

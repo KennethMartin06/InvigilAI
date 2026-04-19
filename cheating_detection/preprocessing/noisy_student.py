@@ -100,9 +100,11 @@ class NoisyStudentTrainer:
             y_combined = y_student
 
         self.final_model = teacher
+        self.X_combined = X_combined
+        self.y_combined = y_combined
         if verbose:
             print(f"[NoisyStudent] Completed {len(self.history)} iterations")
-        return self
+        return X_combined, y_combined
 
     def predict(self, X):
         return self.final_model.predict(X)
