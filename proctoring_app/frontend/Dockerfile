@@ -1,9 +1,18 @@
 # syntax=docker/dockerfile:1.6
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY proctoring_app/frontend/package*.json ./
-RUN npm ci --prefer-offline --no-audit
-COPY proctoring_app/frontend/ ./
+
+# Copy only the files needed for install first (layer cache)
+COPY proctoring_app/frontend/package.json ./
+RUN npm install --no-audit --no-fund --prefer-offline
+
+# Copy source files explicitly (avoids checksum errors from stale node_modules)
+COPY proctoring_app/frontend/index.html ./
+COPY proctoring_app/frontend/vite.config.js ./
+COPY proctoring_app/frontend/postcss.config.js ./
+COPY proctoring_app/frontend/tailwind.config.js ./
+COPY proctoring_app/frontend/src/ ./src/
+
 ARG VITE_API_BASE=/api
 ARG VITE_WS_BASE=
 ENV VITE_API_BASE=$VITE_API_BASE VITE_WS_BASE=$VITE_WS_BASE
@@ -11,7 +20,6 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 EXPOSE 80
-# Generate nginx config inline to avoid COPY issues
 RUN cat > /etc/nginx/conf.d/default.conf <<'EOF'
 upstream backend { server backend:8000; }
 server {
@@ -28,4 +36,3 @@ EOF
 COPY --from=builder /app/dist /usr/share/nginx/html
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://localhost/health || exit 1
 CMD ["nginx", "-g", "daemon off;"]
-
