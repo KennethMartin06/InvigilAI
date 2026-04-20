@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.6
 #
-# Backend image — FastAPI + PyTorch + MediaPipe + ensemble models.
+# Backend image — FastAPI + ONNXRuntime + MediaPipe + sklearn ensemble.
+# PyTorch is intentionally excluded to keep the image under ~1.5 GB.
+# The MLP runs via ONNX Runtime (mlp_model.onnx), not torch.
 # Built from the repo root: docker build -f proctoring_app/backend/Dockerfile .
 
 FROM python:3.11-slim AS base

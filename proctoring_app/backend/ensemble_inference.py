@@ -18,9 +18,15 @@ import os
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-import torch
 
-from .inference import MLP, CLASS_NAMES, load_model, load_scaler
+try:
+    import torch
+    _HAS_TORCH = True
+except ImportError:
+    torch = None  # type: ignore
+    _HAS_TORCH = False
+
+from .inference import CLASS_NAMES, load_model, load_scaler
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +98,9 @@ class EnsembleInferencer:
             except Exception as exc:
                 logger.error("[Ensemble] Failed to load scaler: %s", exc)
 
-        # --- MLP (PyTorch) ----------------------------------------------------
+        # --- MLP (PyTorch) — optional; skipped in slim production image ──────
         mlp_path = os.path.join(models_dir, "mlp_model.pth")
-        if os.path.exists(mlp_path):
+        if _HAS_TORCH and os.path.exists(mlp_path):
             try:
                 self.models["mlp"] = load_model(mlp_path)
                 self.weights["mlp"] = DEFAULT_WEIGHTS["mlp"]
@@ -102,6 +108,8 @@ class EnsembleInferencer:
                 logger.info("[Ensemble] Loaded MLP (PyTorch)")
             except Exception as exc:
                 logger.warning("[Ensemble] MLP skipped: %s", exc)
+        elif not _HAS_TORCH and os.path.exists(mlp_path):
+            logger.info("[Ensemble] MLP .pth found but PyTorch not installed — using ONNX instead")
 
         # --- ONNX MLP (optimized for production) ------------------------------
         onnx_path = os.path.join(models_dir, "mlp_model.onnx")
@@ -155,6 +163,8 @@ class EnsembleInferencer:
     # ── Per-model probability extraction ──────────────────────────────────────
 
     def _predict_mlp(self, x_scaled_16: np.ndarray) -> np.ndarray:
+        if not _HAS_TORCH:
+            raise RuntimeError("PyTorch not installed — ONNX path should be used instead")
         model = self.models["mlp"]
         with torch.no_grad():
             x = torch.tensor(x_scaled_16, dtype=torch.float32)
