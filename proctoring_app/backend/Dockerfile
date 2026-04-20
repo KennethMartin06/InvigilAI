@@ -36,10 +36,8 @@ RUN mkdir -p /app/proctoring_app/backend/uploads/screenshots
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 \
+    CMD curl -fsS http://localhost:${PORT:-8000}/health || exit 1
 
-# Run uvicorn with workers tuned for CPU (override via env var)
-CMD ["uvicorn", "proctoring_app.backend.app:app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Railway injects $PORT dynamically; fall back to 8000 for local/Docker Compose
+CMD ["sh", "-c", "uvicorn proctoring_app.backend.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips '*'"]
